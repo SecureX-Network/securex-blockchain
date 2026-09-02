@@ -2,6 +2,28 @@
 
 All notable changes to the CTN Blockchain are documented in this file.
 
+## [0.3.0] - 2026-09-02
+
+### Added — Production / demo hardening (backward compatible)
+
+- **Config & environment** (`src/config/config.ts`, `src/config/env.ts`, `.env.example`): a minimal `.env` loader (no external dependency), `NodeConfig` now carries `host`, `apiHost`, `protocolVersion`, `consensus`, `cors`, `requestLimitBytes`, and `logLevel`; `normalizeConfig()` fills partial configs. Default CORS origin `['*']` is applied only when no origins are configured.
+- **API middleware** (`src/api/middleware.ts`): CORS, request-id, structured envelopes `okResponse`/`failResponse`, `paginate`, safe access logging, and `INVALID_REQUEST_BODY`/`INTERNAL_ERROR` handlers. `failResponse` keeps `error` as a string code (V2-compatible) and adds `message`/`errorCode`.
+- **Expanded verification** (`src/services/verification.ts`): `EXPIRED` status, `keyStatus`, `protocolCompatible`, `issuerSignatureValid`, and `verifiedAt` fields.
+- **Audit service** (`src/services/audit.ts`): `AuditService` with 17 event types, capped in-memory buffer (10000), and severity mapping; lifecycle events recorded on block commit; `/audit/events` and `/audit/summary` endpoints.
+- **History service** (`src/services/history.ts`): bounded credential/issuer history queries over committed blocks.
+- **Tamper-check service** (`src/services/tamper-check.ts`): EXACT/TAMPERED/UNVERIFIABLE document-hash checks against the on-chain anchor; records `MERKLE_VERIFICATION_FAILURE` audit events.
+- **Auth boundary** (`src/api/auth.ts`): `Principal`/`Authenticator`/`AuthorizationPolicy` and `classifyEndpoint` so hosts can apply 0/1 pre-auth policy; a no-op `AnonymousAuthenticator` for the single-node/demo deployment.
+- **Integration contracts** (`src/contracts/fraud.ts`, `src/contracts/platform.ts`): exported from `src/index.ts`.
+- **Demo data generator** (`scripts/demo-data.ts`, `npm run demo:data`): deterministic demo institutions/credentials seeded through the real transaction pipeline, marked `demo:true`, fictional institutions only.
+- **New endpoints / client methods** (`src/api/server.ts`, `src/api/client.ts`): `/state/keys`, `/state/keys/owner/:ownerId`, `/state/issuers/:id/history`, `/state/credentials/:id/evidence`, `/state/credentials/:id/history`, `/state/credentials/:id/proof`, `/contracts/tamper-check`, `/contracts/fraud/anchor`, `/audit/events`, `/audit/summary`, `/openapi.json`; client `signV2TransactionAs`, `submitV2TransactionAs`, `getStateSummary`, `getKeys`, `getKey`, `getKeysByOwner`, `getIssuerHistory`, `getAuditEvents`, `getAuditSummary`, `tamperCheck`, `getFraudAnchor`, `getOpenApi`.
+- **Wiring** (`src/node.ts`, `src/consensus/permissioned/consensus.ts`, `src/core/state/state.ts`, `src/modules/issuers/module.ts`, `src/utils/logger.ts`): recovery-validated startup, `AuditService` + `onBlockCommitted` lifecycle audit, `ConsensusEvents.onRejected`, `IssuerRecord.updatedAt`, `configureLogging`, state persisted on `stop()`.
+- **Tests**: `tests/unit/{config,audit,history,middleware,tamper-check,verification-expanded,v2-authorization,security}`, shared chain helpers (`tests/helpers-v2.ts`), and `tests/integration/{api,demo}` covering auth boundary, new endpoints, persistence across restart, and the demo-data pipeline.
+
+### Notes
+
+- Full suite now runs **25 suites / 182 tests**; `npm run build` and `npm run lint` are clean.
+- Demo/audit/history data is marked `demo:true`; the generator only uses fictional institutions.
+
 ## [0.2.0] - 2026-09-02
 
 ### Added — SecureX Blockchain V2 (hardening, backward compatible)

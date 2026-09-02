@@ -104,6 +104,7 @@ export class IssuerUpdateModule implements TransactionModule {
 
     if (name) issuer.name = name;
     if (metadata) issuer.metadata = { ...issuer.metadata, ...metadata };
+    issuer.updatedAt = context.timestamp;
 
     state.setIssuer(issuer);
   }

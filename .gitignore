@@ -4,8 +4,10 @@ coverage/
 *.log
 .env
 .env.*
+!.env.example
 config/secrets.*
 data/
+.ctn/
 .DS_Store
 *.db
 *.db-journal

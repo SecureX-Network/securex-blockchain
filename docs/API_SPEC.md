@@ -18,19 +18,18 @@ Every response uses a uniform envelope:
 ```json
 {
   "success": true,
-  "data": { "..." },
-  "error": null
+  "data": { "..." }
 }
 ```
+
+On failure, `error` is a **string error code** (backward-compatible with V2 clients), with a human-readable `message` and a structured `errorCode` for richer clients:
 
 ```json
 {
   "success": false,
-  "data": null,
-  "error": {
-    "code": "UNKNOWN_CREDENTIAL",
-    "message": "Credential not found"
-  }
+  "error": "UNKNOWN_CREDENTIAL",
+  "message": "Credential not found",
+  "errorCode": "UNKNOWN_CREDENTIAL"
 }
 ```
 
@@ -38,7 +37,9 @@ Every response uses a uniform envelope:
 |-------|------|-------------|
 | `success` | boolean | Whether the request succeeded |
 | `data` | object/array/null | Payload on success |
-| `error` | object/null | `{ code, message }` on failure |
+| `error` | string/null | Error code string on failure |
+| `message` | string | Human-readable detail on failure |
+| `errorCode` | string | Structured error code on failure |
 
 ## Error Codes
 
@@ -54,6 +55,7 @@ Every response uses a uniform envelope:
 | `BLOCK_NOT_FOUND` | Requested block not found |
 | `TRANSACTION_NOT_FOUND` | Requested transaction not found |
 | `INVALID_INPUT` | Malformed request body or parameters |
+| `INVALID_REQUEST_BODY` | Request body is malformed or exceeds the configured limit |
 | `UNAUTHORIZED` | Caller lacks required permission (e.g. admin-only) |
 | `INTERNAL_ERROR` | Unexpected server error |
 
@@ -295,6 +297,85 @@ Register a new node as authorized on the network.
   "data": { "nodeId": "<hex(publicKey)>", "status": "registered" }
 }
 ```
+
+## Production-hardening endpoints
+
+### `GET /state/keys`
+
+List all registered signing keys.
+
+```json
+{ "success": true, "data": [ { "keyId": "...", "ownerId": "...", "status": "ACTIVE" } ] }
+```
+
+### `GET /state/keys/:id` · `GET /state/keys/owner/:ownerId`
+
+Get a single key, or all keys owned by a given identity.
+
+### `GET /state/issuers/:id/history`
+
+Lifecycle/history for an issuer (registration and updates).
+
+```json
+{ "success": true, "data": [ { "type": "ISSUER_REGISTER", "blockHeight": 1, "blockHash": "..." } ] }
+```
+
+### `GET /state/credentials/:id/evidence`
+
+Security evidence bundle for a credential: verification status, issuance transaction, containing block, Merkle proof validity, issuer identity, and lifecycle history.
+
+```json
+{
+  "success": true,
+  "data": {
+    "credentialId": "...",
+    "status": "VALID",
+    "verification": { "..." },
+    "transaction": { "..." },
+    "block": { "..." },
+    "merkleProofValid": true,
+    "issuer": { "issuerId": "...", "publicKey": "..." },
+    "lifecycle": [ { "..." } ],
+    "anchor": { "txId": "...", "blockHeight": 3, "blockHash": "..." },
+    "verifiedAt": "..."
+  }
+}
+```
+
+### `POST /contracts/tamper-check`
+
+Verify a presented document hash against the on-chain `credentialHash` anchor.
+
+**Request body:** `{ "credentialId": "...", "documentHash": "<sha256-hex>" }`
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "EXACT" | "TAMPERED" | "UNVERIFIABLE",
+    "hashMatch": true,
+    "anchoredHash": "<sha256-hex>"
+  }
+}
+```
+
+A mismatch is recorded as a `MERKLE_VERIFICATION_FAILURE` audit event.
+
+### `POST /contracts/fraud/anchor`
+
+Return the on-chain anchor evidence for a credential (used for fraud investigation workflows).
+
+### `GET /audit/events` · `GET /audit/summary`
+
+Query recent audit events (bounded, paginated) and a summary of event counts by severity type.
+
+```json
+{ "success": true, "data": [ { "type": "CREDENTIAL_ISSUED", "severity": "info", "referenceId": "...", "timestamp": "..." } ] }
+```
+
+### `GET /openapi.json`
+
+Serve the OpenAPI document describing the API surface (returned as the raw document body).
 
 ## Security Notes
 

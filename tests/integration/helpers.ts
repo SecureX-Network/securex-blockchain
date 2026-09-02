@@ -1,5 +1,5 @@
 import { CtnNode } from '../../src/node';
-import { NodeConfig } from '../../src/config/config';
+import { NodeConfig, normalizeConfig } from '../../src/config/config';
 import { CryptoManager, KeyPair } from '../../src/crypto/signatures/crypto';
 import { DEFAULT_GENESIS_TIMESTAMP } from '../../src/config/config';
 import * as os from 'os';
@@ -25,7 +25,7 @@ export function makeNodeConfig(
   validators: string[],
   peers: string[] = [],
 ): NodeConfig {
-  return {
+  return normalizeConfig({
     nodeId,
     port,
     dataDir: path.join(os.tmpdir(), `ctn-int-${nodeId}-${process.pid}-${counter++}-${Date.now()}`),
@@ -36,7 +36,7 @@ export function makeNodeConfig(
     maxPeers: 50,
     heartbeatInterval: 5000,
     genesisTimestamp: DEFAULT_GENESIS_TIMESTAMP,
-  };
+  });
 }
 
 export async function startNode(

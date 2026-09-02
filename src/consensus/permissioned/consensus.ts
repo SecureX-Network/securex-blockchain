@@ -9,6 +9,10 @@ export interface ConsensusConfig {
   minSignatures: number;
 }
 
+export interface ConsensusEvents {
+  onRejected?: (error: string | null, tx?: Transaction, block?: Block) => void;
+}
+
 export class PermissionedConsensus {
   private chain: Chain;
   private config: ConsensusConfig;
@@ -18,17 +22,20 @@ export class PermissionedConsensus {
   private pendingTxs: Transaction[] = [];
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private events: ConsensusEvents;
 
   constructor(
     chain: Chain,
     config: ConsensusConfig,
     nodeId: string,
     privateKey: string,
+    events: ConsensusEvents = {},
   ) {
     this.chain = chain;
     this.config = config;
     this.nodeId = nodeId;
     this.privateKey = privateKey;
+    this.events = events;
   }
 
   setPanel(panel: string[]): void {
@@ -55,9 +62,13 @@ export class PermissionedConsensus {
 
   addTransaction(tx: Transaction): string | null {
     const error = this.chain.validateTransaction(tx);
-    if (error) return error;
+    if (error) {
+      this.events.onRejected?.(error, tx);
+      return error;
+    }
 
     if (this.pendingTxs.some(t => t.id === tx.id)) {
+      this.events.onRejected?.('DUPLICATE_TRANSACTION', tx);
       return 'DUPLICATE_TRANSACTION';
     }
 
@@ -121,6 +132,7 @@ export class PermissionedConsensus {
     const error = this.chain.commitBlock(block);
     if (error) {
       getLogger().warn(`Proposal rejected locally: ${error}`);
+      this.events.onRejected?.(error, undefined, block);
       return null;
     }
 
@@ -143,13 +155,17 @@ export class PermissionedConsensus {
       const validator = this.chain.getState().getValidator(sig.validatorId);
       if (validator && validator.publicKey) {
         if (!CryptoManager.verify(signingData, sig.signature, validator.publicKey)) {
+          this.events.onRejected?.('INVALID_VALIDATOR_SIGNATURE', undefined, block);
           return 'INVALID_VALIDATOR_SIGNATURE';
         }
       }
     }
 
     const error = this.chain.commitBlock(block);
-    if (error) return error;
+    if (error) {
+      this.events.onRejected?.(error, undefined, block);
+      return error;
+    }
 
     this.pendingTxs = this.pendingTxs.filter(tx => !block.transactions.some(bt => bt.id === tx.id));
 

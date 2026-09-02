@@ -34,18 +34,30 @@ npx ts-node scripts/attack-simulation.ts
 
 See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) (V2 addendum) and [docs/ENGINEERING_SUMMARY.md](docs/ENGINEERING_SUMMARY.md) for details.
 
+### Production & demo hardening (0.3.0)
+
+- **Real config/env** — `.env` loader, expanded `NodeConfig` (host, apiHost, protocolVersion, consensus, CORS, request limits, log level) with `normalizeConfig()`.
+- **API middleware** — CORS, request IDs, structured envelopes, safe logging, bounded pagination, and strict body-error handling.
+- **Audit + observability** — `AuditService` records lifecycle/tamper events; `/audit/events` and `/audit/summary` expose them.
+- **History & tamper-check** — bounded credential/issuer history (`/state/.../history`) and document-hash tamper checks (`/contracts/tamper-check`).
+- **Expanded verification** — `EXPIRED`, `keyStatus`, `protocolCompatible`, and `verifiedAt` in verification evidence.
+- **Auth boundary** — `src/api/auth.ts` defines a clean `Authenticator`/`AuthorizationPolicy` interface so hosts can enforce a 0/1 pre-auth policy (a no-op `AnonymousAuthenticator` is used for the demo deployment).
+- **Demo data** — `npm run demo:data` seeds deterministic, `demo:true`-flagged fictional institutions through the real transaction pipeline.
+
 ## Architecture Overview
 
 ```
 src/
-├── api/             REST API (Express)
+├── api/             REST API (Express) + middleware + auth boundary
 ├── cli/             Command-line interface
 ├── consensus/       Proof-of-Authority (round-robin)
+├── contracts/       Integration contracts (fraud, platform)
 ├── core/            Domain-agnostic blockchain core (blocks, txs, state, validators)
 ├── crypto/          Ed25519 + SHA-256 (Node.js crypto)
 ├── merkle/          Merkle trees and inclusion proofs
 ├── modules/         Application modules (issuers, credentials, revocation, keys)
 ├── network/         WebSocket P2P (transport, protocol, discovery, peers)
+├── services/        Audit, history, tamper-check, verification, evidence, recovery, observability
 └── storage/         Pluggable storage (FileStore default)
 ```
 
@@ -106,31 +118,42 @@ Interactive scripts that bring up real node clusters locally and drive them via 
 
 ```bash
 npm run demo                     # 3-validator demo: issuers, credentials, Merkle proof, revocation, convergence
+npm run demo:data                # seed deterministic DEMO institutions/credentials via real transactions
 npm run benchmark                # 2-validator throughput benchmark (300 credential issues)
 npm run benchmark -- 3 500       # custom: 3 validators x 500 issues
 ```
 
 - `scripts/demo.ts` starts a 3-validator network, registers an issuer, issues 5 credentials (batched into one block), fetches and verifies a Merkle inclusion proof, revokes a credential, and confirms all nodes converge at the same height.
+- `scripts/demo-data.ts` seeds fictional **SecureX Demo** institutions (university, technical institute, professional academy) and their credentials through the **real transaction pipeline** — every record is flagged `demo:true` and must never be presented as real institutional data. `tests/integration/demo.test.ts` validates the generated lifecycle states.
 - `scripts/benchmark.ts` reports submission throughput, commit throughput, and convergence across a configurable validator set/size.
 
 Run these one at a time — they bind to fixed port ranges, so concurrent clusters interfere.
 
 ## Configuration
 
-Configuration is provided via a **config file** and/or **environment variables**. See the `config/` directory for templates.
+Configuration is provided via a **config file** and/or **environment variables**. See the `config/` directory for templates and `.env.example` for the supported variables.
 
 ### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CTN_HOME` | `./data` | Data directory (blocks, state, peers) |
-| `CTN_CONFIG` | config/default | Config file path |
-| `CTN_API_PORT` | `3001` | REST API port |
-| `CTN_P2P_PORT` | configurable | WebSocket P2P listen port |
-| `CTN_NODE_NAME` | hostname | Human-readable node name |
+| `CTN_NODE_ID` | `''` | Node identity |
+| `CTN_HOST` | `0.0.0.0` | P2P bind host |
+| `CTN_P2P_PORT` / `CTN_PORT` | `3001` | P2P listen port |
+| `CTN_API_HOST` | `0.0.0.0` | API bind host |
+| `CTN_API_PORT` | `4001` | REST API port |
+| `CTN_DATA_DIR` | `./.ctn/data` | Data directory (blocks, state, keys) |
+| `CTN_VALIDATORS` | — | Comma-separated authorized validators |
+| `CTN_BOOTSTRAP_NODES` / `CTN_PEERS` | — | Comma-separated seed peers |
 | `CTN_MAX_PEERS` | `50` | Max connected peers |
-| `CTN_HEARTBEAT_MS` | `30000` | Heartbeat interval |
-| `CTN_BOOTSTRAP_NODES` | — | Comma-separated seed peers (host:port) |
+| `CTN_HEARTBEAT` / `CTN_HEARTBEAT_MS` | `30000` | Heartbeat interval |
+| `CTN_BLOCK_INTERVAL` | `5000` | Consensus block interval |
+| `CTN_GENESIS_TIME` | `2026-01-01T00:00:00.000Z` | Genesis timestamp |
+| `CTN_PROTOCOL_VERSION` | `2.0` | Default protocol version |
+| `CTN_CORS_ENABLED` | `true` | Enable CORS |
+| `CTN_ALLOWED_ORIGINS` | `*` | Comma-separated allowed CORS origins |
+| `CTN_REQUEST_LIMIT_BYTES` | `2097152` | Max JSON request body size |
+| `CTN_LOG_LEVEL` | `info` | Log level (`debug`/`info`/`warn`/`error`) |
 
 ### Config file
 

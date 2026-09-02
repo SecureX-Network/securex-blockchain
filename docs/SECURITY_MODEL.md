@@ -167,3 +167,31 @@ For blocks with `header.version >= 2`, the block validator additionally enforces
 | Issuer lifecycle transitions | permissive | `INVALID_STATE_TRANSITION` |
 | Block hash integrity | — | `INVALID_BLOCK` when `version >= 2` |
 | Duplicate tx in block | — | `DUPLICATE_TRANSACTION` |
+
+---
+
+# Production & Demo Hardening Addendum (0.3.0)
+
+This layer hardens the network edge and adds security-relevant services without changing the V1/V2 consensus or transaction semantics.
+
+## API edge hardening (`src/api/middleware.ts`)
+
+- **CORS allow-list** — responses only set `Access-Control-Allow-Origin` for configured/allowed origins; wildcard is opt-in, and disallowed origins receive no CORS headers.
+- **Request-ID tracing** — every request gets an `X-Request-Id` (preserved if supplied) for correlation in audit/access logs.
+- **Safe access logging** — logs method, path, status, and latency only; **never logs request bodies** (which can carry signatures or payload metadata).
+- **Structured error envelopes** — `failResponse` returns `{ success:false, error:<code>, message, errorCode }`; `error` is a string code (V2-compatible), while `message`/`errorCode` give richer clients. Unhandled exceptions become a generic `INTERNAL_ERROR` (500) and never leak internal details.
+- **Body / pagination guards** — oversized or malformed JSON → `INVALID_REQUEST_BODY`; `paginate` clamps limits to a max so queries cannot be unbounded.
+
+## Auth boundary (`src/api/auth.ts`)
+
+`classifyEndpoint(method, path)` classifies every endpoint as `public` (verification/health/state reads) or `privileged` (audit, keys, issuer, write/contract operations) so a host can apply a 0/1 pre-authentication policy. The demo ships a no-op `AnonymousAuthenticator`; **privileged writes are still constrained by cryptographic module-level validation and per-sender nonces**, not by trust in the API. Operators may supply a real `Authenticator` implementation without changing the chain. No production credentials are ever hardcoded or committed.
+
+## Audit & tamper detection (`src/services/audit.ts`, `src/services/tamper-check.ts`)
+
+- `AuditService` records 17 event types (issuance, lifecycle transitions, merkle-verification failures, state-validation failures, etc.) into a **capped in-memory buffer** (10000) with severity mapping; exposed via `/audit/events` and `/audit/summary`.
+- `TamperCheckService.check` recomputes the SHA-256 of a presented document and compares it to the on-chain `credentialHash` anchor, returning `EXACT` / `TAMPERED` / `UNVERIFIABLE`. A mismatch records a `MERKLE_VERIFICATION_FAILURE` audit event.
+
+## Data privacy preserved
+
+Only SHA-256 hashes and Merkle proofs are still stored on-chain. The audit, history, and tamper-check services operate only on on-chain hashes/metadata; no PII, private keys, or signatures are ever returned by the API or written to audit records.
+

@@ -40,6 +40,7 @@ export interface IssuerRecord {
   publicKey: string;
   status: 'ACTIVE' | 'SUSPENDED' | 'REVOKED';
   registeredAt: string;
+  updatedAt?: string;
   metadata: Record<string, any>;
 }
 

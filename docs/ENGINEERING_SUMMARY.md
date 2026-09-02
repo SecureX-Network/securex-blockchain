@@ -59,8 +59,9 @@ Aligned to the actual single-proposer-commit implementation: `docs/PROTOCOL.md`,
 
 ```bash
 npm install
-npm test          # 15 suites / 118 tests (includes V2 hardening)
+npm test          # 20+ suites / 182 tests (V2 hardening + production hardening)
 npm run demo      # 3-validator demo
+npm run demo:data # seed deterministic demo institutions/credentials
 npm run benchmark # 2-validator throughput benchmark
 npm run dev       # run a node via ts-node
 ```
@@ -124,4 +125,36 @@ A single codebase serves both generations, keyed off explicit version fields:
 
 - V2 keeps the V1 proposer-trust model; a malicious proposer's invalid block is rejected by peers (see `docs/THREAT_MODEL.md`).
 - V2 nonce replay protection and issuer authorization apply only to version-2 transactions; version-1 transactions retain the original permissive path by design for backward compatibility.
+
+---
+
+# SecureX Blockchain — Production & Demo Hardening Summary (0.3.0)
+
+Status: **Complete and verified.** Adds a real config/env layer, API middleware, audit/history/tamper-check services, an auth boundary, and deterministic demo-data generation on top of the V2 hardened foundation. Backward compatible — all V2 and V1 tests remain green.
+
+## What was added
+
+- **Config & environment** (`src/config/config.ts`, `src/config/env.ts`): a minimal, dependency-free `.env` loader and an expanded `NodeConfig` (`host`, `apiHost`, `protocolVersion`, `consensus`, `cors`, `requestLimitBytes`, `logLevel`) with `normalizeConfig()` for partial configs. `.env.example` documents the supported variables.
+- **API middleware** (`src/api/middleware.ts`): CORS, request-id, `okResponse`/`failResponse` envelopes, `paginate` (bounded), safe access logging, and `INVALID_REQUEST_BODY`/`INTERNAL_ERROR` handlers. `failResponse` keeps `error` as a string code (V2-compatible) and adds `message`/`errorCode`.
+- **Audit service** (`src/services/audit.ts`): 17 event types, capped in-memory buffer (10000), severity mapping; lifecycle/tamper events recorded and queryable at `/audit/events` and `/audit/summary`.
+- **History service** (`src/services/history.ts`): bounded credential/issuer history over committed blocks (`/state/.../history`).
+- **Tamper-check service** (`src/services/tamper-check.ts`): EXACT/TAMPERED/UNVERIFIABLE document-hash checks against the on-chain anchor, recording `MERKLE_VERIFICATION_FAILURE` audit events (`/contracts/tamper-check`).
+- **Expanded verification** (`src/services/verification.ts`): `EXPIRED` status plus `keyStatus`, `protocolCompatible`, `issuerSignatureValid`, and `verifiedAt` evidence fields.
+- **Auth boundary** (`src/api/auth.ts`): `Principal`/`Authenticator`/`AuthorizationPolicy` and `classifyEndpoint` for 0/1 pre-auth policy; no-op `AnonymousAuthenticator` for the demo deployment. Privileged writes remain constrained by cryptographic module-level validation.
+- **Integration contracts** (`src/contracts/fraud.ts`, `src/contracts/platform.ts`).
+- **Demo data** (`scripts/demo-data.ts`, `npm run demo:data`): deterministic, `demo:true`-flagged fictional institutions seeded through the **real transaction pipeline** (never by direct state writes).
+
+## Verification
+
+- **Full suite**: `npm test` → **25 suites / 182 tests passed**.
+- **Build/lint**: `npm run build` and `npm run lint` (`tsc --noEmit`) clean.
+- **New coverage** (`tests/`): `config`, `audit`, `history`, `middleware`, `tamper-check`, `verification-expanded`, `v2-authorization`, `security` (unit); `api` and `demo` (integration — auth boundary, new endpoints, persistence across restart, demo pipeline). Shared V2 chain builders in `tests/helpers-v2.ts`.
+- **Demo data validated** end-to-end in `tests/integration/demo.test.ts` (SUSPENDED / REVOKED / VALID states verified through the real verification endpoint).
+
+## Residual / documented
+
+- Audit history is an in-memory, capped buffer (bounded by design); long-term persistence of audit trails is out of scope for the prototype.
+- The auth layer ships a no-op authenticator; operators must supply their own `Authenticator` to enforce real pre-auth policy in production.
+- Demo data is clearly flagged `demo:true` and must never be presented as real-world institutional data.
+
 </content>

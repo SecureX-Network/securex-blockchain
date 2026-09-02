@@ -27,5 +27,13 @@ export { CredentialVerificationService, VerificationStatus, VerificationEvidence
 export { ChainEvidenceProvider, BlockchainEvidenceProvider, BlockchainEvidence, EvidenceResult } from './services/evidence';
 export { ObservabilityService, NodeMetrics } from './services/observability';
 export { ChainRecovery, RecoveryResult } from './services/recovery';
+export { AuditService, AuditEvent, AuditEventType } from './services/audit';
+export { HistoryService, HistoryEntry } from './services/history';
+export { TamperCheckService } from './services/tamper-check';
 export { BlockchainError, BlockchainResult, ok, fail } from './core/errors';
 export { PROTOCOL_VERSION, BLOCK_VERSION, TRANSACTION_VERSION, isSupportedProtocolVersion, isSupportedBlockVersion, isSupportedTransactionVersion } from './core/version';
+export { loadEnvFile } from './config/env';
+export { normalizeConfig } from './config/config';
+export { Authenticator, AnonymousAuthenticator, Principal, AuthContext, AuthorizationPolicy, classifyEndpoint, DEFAULT_AUTHORIZATION_POLICY } from './api/auth';
+export { FraudAnalysisRequest, FraudAnalysisResult, BlockchainAnchorForFraud, TamperCheckResult } from './contracts/fraud';
+export { PlatformEnvelope, PlatformIssuer, PlatformCredential, PlatformLifecycleEvent, PlatformVerificationResult, PlatformBlock, PlatformValidator, PlatformNetworkStatus, PlatformSecurityEvidence, RealVsDemo } from './contracts/platform';

@@ -49,6 +49,23 @@ End-to-end behavior of a composed node:
 - **Node sync** — a fresh node syncs the full chain from a peer and matches the canonical tip.
 - **Credential lifecycle** — issue → verify hash → suspend → reinstate → revoke → reissue.
 - **Key rotation** — register a key, rotate it, confirm old key superseded.
+- **Auth boundary & new endpoints** (`tests/integration/api.test.ts`) — public vs. privileged endpoint classification, `/state/keys`, `/audit/events`, `/contracts/tamper-check`, `/openapi.json`, and **state persistence across a node restart** (same dataDir).
+- **Demo-data pipeline** (`tests/integration/demo.test.ts`) — seeds fictional `demo:true` institutions/credentials and asserts their lifecycle states via the real verification endpoint.
+
+## Production-hardening tests (unit)
+
+New primitives added alongside the 0.3.0 hardening:
+
+- **Config** — `.env` loading, env-override parsing, `normalizeConfig` default-filling, and CORS request limits.
+- **Middleware** — CORS allow/deny, request-id preservation, `okResponse`/`failResponse` envelopes, body-parser/final error handlers, and bounded `paginate`.
+- **Audit** — event recording, capped buffer, severity mapping, and tamper/state-validation event emission.
+- **History** — credential/issuer history, bounded query limits, lifecycle summaries.
+- **Tamper-check** — EXACT/TAMPERED/UNVERIFIABLE document-hash comparisons and audit-event emission.
+- **Expanded verification** — `EXPIRED` status by expiry metadata, `keyStatus`, `protocolCompatible`, `verifiedAt`, inactive-issuer INVALID.
+- **V2 authorization** — only the issuer-derived (or issuerId-bound) sender may suspend/revoke/reinstate its credentials; unauthorized V2 actors are rejected.
+- **Security** — malformed payloads rejected, `onRejected` notifications, unknown-proposer block rejection.
+
+These build chains through the real transaction pipeline using the shared builders in `tests/helpers-v2.ts`. No state is ever fabricated directly.
 
 ## Security Tests
 

@@ -14,6 +14,8 @@
     "test:security": "jest --testPathPattern=tests/security --forceExit",
     "test:network": "jest --testPathPattern=tests/network --forceExit",
     "demo": "ts-node scripts/demo.ts",
+    "demo:data": "ts-node scripts/demo-data.ts",
+    "demo:attack": "ts-node scripts/attack-simulation.ts",
     "benchmark": "ts-node scripts/benchmark.ts",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"

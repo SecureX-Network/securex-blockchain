@@ -2,10 +2,12 @@ import {
   Transaction,
   TransactionType,
   buildTransaction,
+  buildV2Transaction,
   createTransactionId,
   getSigningData,
 } from '../core/transaction/transaction';
 import { CryptoManager } from '../crypto/signatures/crypto';
+import { PROTOCOL_VERSION, TRANSACTION_VERSION } from '../core/version';
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -92,6 +94,49 @@ export class BlockchainClient {
     return this.request('POST', '/transactions', tx);
   }
 
+  /**
+   * Sign and submit a V2 transaction as a specific actor (e.g. an issuer acting
+   * through their own key). This exercises the hardened V2 validation path where
+   * issuer authorization and replay protection are mandatory.
+   *
+   * The caller is responsible for providing a correct, monotonically increasing
+   * `nonce` for the actor's sender id.
+   */
+  async submitV2TransactionAs(
+    type: TransactionType,
+    payload: any,
+    actor: { sender: string; privateKey: string },
+    nonce: number,
+  ): Promise<ApiResponse<any>> {
+    const tx = this.signV2TransactionAs(type, payload, actor, nonce);
+    return this.request('POST', '/transactions', tx);
+  }
+
+  signV2TransactionAs(
+    type: TransactionType,
+    payload: any,
+    actor: { sender: string; privateKey: string },
+    nonce: number,
+  ): Transaction {
+    const id = createTransactionId();
+    const unsigned = {
+      protocolVersion: PROTOCOL_VERSION,
+      transactionVersion: TRANSACTION_VERSION,
+      id,
+      type,
+      timestamp: new Date().toISOString(),
+      sender: actor.sender,
+      nonce,
+      payload,
+    };
+    const signingData = getSigningData(unsigned);
+    const signature = CryptoManager.sign(signingData, actor.privateKey);
+    return {
+      ...unsigned,
+      signature,
+    } as Transaction;
+  }
+
   async submitRawTransaction(tx: Transaction): Promise<ApiResponse<any>> {
     return this.request('POST', '/transactions', tx);
   }
@@ -170,5 +215,49 @@ export class BlockchainClient {
 
   async getBlockchainEvidence(credentialId: string): Promise<ApiResponse<any>> {
     return this.request('GET', `/evidence/${credentialId}`);
+  }
+
+  async getSecurityEvidence(credentialId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/state/credentials/${credentialId}/evidence`);
+  }
+
+  async getStateSummary(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/state');
+  }
+
+  async getKeys(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/state/keys');
+  }
+
+  async getKey(keyId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/state/keys/${keyId}`);
+  }
+
+  async getKeysByOwner(ownerId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/state/keys/owner/${ownerId}`);
+  }
+
+  async getIssuerHistory(issuerId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/state/issuers/${issuerId}/history`);
+  }
+
+  async getAuditEvents(limit = 100, offset = 0): Promise<ApiResponse<any>> {
+    return this.request('GET', `/audit/events?limit=${limit}&offset=${offset}`);
+  }
+
+  async getAuditSummary(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/audit/summary');
+  }
+
+  async tamperCheck(credentialId: string, documentHash: string): Promise<ApiResponse<any>> {
+    return this.request('POST', '/contracts/tamper-check', { credentialId, documentHash });
+  }
+
+  async getFraudAnchor(credentialId: string): Promise<ApiResponse<any>> {
+    return this.request('POST', '/contracts/fraud/anchor', { credentialId });
+  }
+
+  async getOpenApi(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/openapi.json');
   }
 }
