@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { Block, GENESIS_HASH, getBlockSigningData, BlockHeader, ValidatorSignature } from './block/block';
-import { Transaction, TransactionType } from './transaction/transaction';
+import { Transaction, TransactionType, computeTransactionHash } from './transaction/transaction';
 import { TransactionValidator } from './validation/tx-validator';
 import { BlockValidator, TipInfo } from './validation/block-validator';
 import { StateManager, ValidatorRecord } from './state/state';
@@ -15,6 +15,7 @@ import { MerkleTree } from '../merkle/merkle';
 import { CryptoManager } from '../crypto/signatures/crypto';
 import { getLogger } from '../utils/logger';
 import { canonicalJSON } from '../crypto/hashing/hash';
+import { BlockchainError } from './errors';
 
 export interface ChainEvents {
   onBlockCommitted?: (block: Block) => void;
@@ -71,6 +72,16 @@ export class Chain {
     return this.storage.blockStore.getBlockByHash(hash);
   }
 
+  getBlocks(fromHeight: number, toHeight?: number): Block[] {
+    const end = toHeight ?? this.getHeight();
+    const blocks: Block[] = [];
+    for (let h = Math.max(0, fromHeight); h <= end; h++) {
+      const block = this.getBlockByHeight(h);
+      if (block) blocks.push(block);
+    }
+    return blocks;
+  }
+
   getTransaction(id: string) {
     return this.storage.transactionStore.getTransaction(id);
   }
@@ -122,8 +133,8 @@ export class Chain {
     return createHash('sha256').update(signingData).digest('hex');
   }
 
-  computeMerkleRoot(transactions: Transaction[]): string {
-    return this.blockValidator.computeMerkleRoot(transactions);
+  computeMerkleRoot(transactions: Transaction[], version: number = 1): string {
+    return this.blockValidator.computeMerkleRoot(transactions, version);
   }
 
   createBlock(
@@ -131,7 +142,7 @@ export class Chain {
     transactions: Transaction[],
     previousTip: TipInfo,
   ): Block {
-    const merkleRoot = this.blockValidator.computeMerkleRoot(transactions);
+    const merkleRoot = this.blockValidator.computeMerkleRoot(transactions, 1);
 
     const header: BlockHeader = {
       version: 1,
@@ -154,9 +165,38 @@ export class Chain {
     return block;
   }
 
+  createBlockV2(
+    proposerId: string,
+    transactions: Transaction[],
+    previousTip: TipInfo,
+    protocolVersion: string = '2.0',
+  ): Block {
+    const merkleRoot = this.blockValidator.computeMerkleRoot(transactions, 2);
+
+    const header: BlockHeader = {
+      version: 2,
+      height: previousTip.height + 1,
+      timestamp: new Date().toISOString(),
+      previousHash: previousTip.hash,
+      merkleRoot,
+      proposerId,
+    };
+
+    const blockHash = this.computeBlockHash(header, transactions);
+
+    const block: Block = {
+      header,
+      transactions,
+      validatorSignatures: [],
+      hash: blockHash,
+    };
+
+    return block;
+  }
+
   commitBlock(block: Block): string | null {
     if (this.storage.blockStore.hasBlock(block.header.height, block.hash)) {
-      return 'DUPLICATE_BLOCK';
+      return BlockchainError.DUPLICATE_BLOCK;
     }
 
     const tip = this.getTip();

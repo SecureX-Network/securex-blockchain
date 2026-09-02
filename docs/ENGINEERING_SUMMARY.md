@@ -59,9 +59,69 @@ Aligned to the actual single-proposer-commit implementation: `docs/PROTOCOL.md`,
 
 ```bash
 npm install
-npm test          # 10 suites / 68 tests
+npm test          # 15 suites / 118 tests (includes V2 hardening)
 npm run demo      # 3-validator demo
 npm run benchmark # 2-validator throughput benchmark
 npm run dev       # run a node via ts-node
 ```
+
+---
+
+# SecureX Blockchain V2 — Hardening Summary
+
+Status: **Complete and verified.** Built on the V1.0 foundation without rewriting it. V1 backward compatibility is preserved and all V1 tests remain green.
+
+## Goal
+
+Harden the V1 credential-trust blockchain into a credential-native _SecureX Blockchain V2_ that stays private/permissioned/lightweight (no crypto, no PoW/Ethereum/Web3/gas), while keeping V1 transaction and block formats fully supported.
+
+## Backward-compatibility strategy
+
+A single codebase serves both generations, keyed off explicit version fields:
+
+| Concern | V1 (legacy) | V2 (hardened) |
+| --- | --- | --- |
+| `protocolVersion` | `'1.0'` | `'2.0'` |
+| `transactionVersion` | `1` | `2` |
+| `block.header.version` | `1` | `2` |
+| Validation strictness | original permissive path | strict path below |
+
+`src/core/version.ts` centralizes supported versions and helper predicates. The original permissive validation runs only for version-1 transactions/blocks, so existing V1 tests and integrations are untouched. Expected error strings (`REPLAYED_TRANSACTION`, `CREDENTIAL_ALREADY_EXISTS`, `INVALID_STATE_TRANSITION`, etc.) are preserved exactly.
+
+## What was added / hardened
+
+- **Versioning & structured errors** (`src/core/version.ts`, `src/core/errors.ts`): `BlockchainError` enum plus `BlockchainResult`/`ok`/`fail` helpers.
+- **Transaction hardening** (`src/core/transaction/transaction.ts`, `src/core/validation/tx-validator.ts`):
+  - `buildV2Transaction`, `computeTransactionHash`, canonical signing data.
+  - **Signature verification** — every tx is verified against the sender's resolved public key (`INVALID_SIGNATURE` on mismatch).
+  - **Sender-key resolution** — a tx may only be sent by a known validator or an ACTIVE issuer (`UNAUTHORIZED_SENDER` otherwise).
+  - **Nonce replay protection** — `nonce <= stored` → `REPLAYED_TRANSACTION` (1-based nonces).
+  - Module-level authorization enforced only when `transactionVersion >= 2`.
+- **Issuer/credential authorization (V2-only)** by the issuers, credentials, and revocation modules — an issuer may only mutate its own credentials, and lifecycle transitions must follow the allowed `canTransition` state machine (`src/core/state/state.ts`).
+- **Merkle proofs** (`src/merkle/proofs.ts`): `MerkleProofService` for creation/verification of inclusion proofs and anchor-hash lists against a block's root.
+- **Services** (`src/services/`):
+  - `verification.ts` — `CredentialVerificationService` (status VALID / REVOKED / NOT_FOUND + proof/block evidence).
+  - `evidence.ts` — `BlockchainEvidenceProvider` / `ChainEvidenceProvider` anchor & issuer-recognition evidence.
+  - `recovery.ts` — `ChainRecovery` re-validates stored blocks, links, and Merkle roots on startup and detects storage tampering.
+  - `observability.ts` — `ObservabilityService` exposing `/ready`, `/status`, `/metrics`, `/verify/:id`, `/evidence/:id`.
+- **Block hardening (V2-only)** in `src/core/validation/block-validator.ts` and `src/core/chain.ts`: block hash integrity check for `block.header.version >= 2`, duplicate tx-ID detection, version-aware Merkle root, `createBlockV2`, `getBlockByHeight`, `getBlocks`, and `computeMerkleRoot`.
+- **CLI/SDK surface**: `src/index.ts`, `src/api/server.ts`, and `src/api/client.ts` export the new V2 modules and endpoints.
+
+## Determinism
+
+`tests/unit/determinism.test.ts` drives two independent nodes through identical transaction streams and proves they converge on identical block hashes, Merkle roots, heights, transaction IDs, and full state JSON — given a shared validator/issuer trust anchor and a canonical (key-order-independent) serialization. This is the foundation for confident multi-node consensus.
+
+## SIH (Simulate · Test · Block · Evidence) demo
+
+`npm run demo` runs the standard 3-validator demo. `npx ts-node scripts/attack-simulation.ts` runs a self-contained SIH loop that simulates eight attack vectors (forged signature, on-chain hash tamper, replay, block tamper, unauthorized proposer, invalid Merkle proof, corrupt stored block, invalid lifecycle transition) and demonstrates each being **blocked** with the concrete error string, backed by the verification/evidence chain.
+
+## Verification
+
+- **Full suite**: `npm test` → **15 suites / 118 tests passed** (49 V1 unit + 10 V1 integration + 6 V1 security + 3 V1 network + V2 hardening suites).
+- **Lint/typecheck**: `npm run lint` (`tsc --noEmit`) clean.
+
+## Residual / documented
+
+- V2 keeps the V1 proposer-trust model; a malicious proposer's invalid block is rejected by peers (see `docs/THREAT_MODEL.md`).
+- V2 nonce replay protection and issuer authorization apply only to version-2 transactions; version-1 transactions retain the original permissive path by design for backward compatibility.
 </content>

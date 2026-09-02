@@ -151,4 +151,24 @@ export class BlockchainClient {
   async getPeers(): Promise<ApiResponse<any>> {
     return this.request('GET', '/network/peers');
   }
+
+  async getReady(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/ready');
+  }
+
+  async getStatus(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/status');
+  }
+
+  async getMetrics(): Promise<ApiResponse<any>> {
+    return this.request('GET', '/metrics');
+  }
+
+  async verifyCredential(credentialId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/verify/${credentialId}`);
+  }
+
+  async getBlockchainEvidence(credentialId: string): Promise<ApiResponse<any>> {
+    return this.request('GET', `/evidence/${credentialId}`);
+  }
 }

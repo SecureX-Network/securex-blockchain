@@ -8,6 +8,17 @@ import {
   ValidationResult,
   ApplyContext,
 } from '../registry';
+import { CryptoManager } from '../../crypto/signatures/crypto';
+
+function isAuthorizedValidatorOrIssuer(state: StateManager, tx: Transaction): boolean {
+  if (state.isAuthorizedValidator(tx.sender)) return true;
+  const issuer = state.getIssuer(tx.sender);
+  if (issuer && issuer.status === 'ACTIVE') return true;
+  for (const v of state.getValidators()) {
+    if (v.publicKey && CryptoManager.deriveNodeId(v.publicKey) === tx.sender) return true;
+  }
+  return false;
+}
 
 export class IssuerModule implements TransactionModule {
   readonly type = TransactionType.ISSUER_REGISTER;
@@ -23,6 +34,19 @@ export class IssuerModule implements TransactionModule {
     }
     if (!publicKey || typeof publicKey !== 'string') {
       return { valid: false, error: 'INVALID_PAYLOAD: publicKey required' };
+    }
+
+    if (tx.protocolVersion === '1.0' && tx.transactionVersion === 1) {
+      if (!state.isAuthorizedValidator(tx.sender)) {
+        const issuer = state.getIssuer(tx.sender);
+        if (!issuer || issuer.status !== 'ACTIVE') {
+          if (!isAuthorizedValidatorOrIssuer(state, tx)) {
+            return { valid: false, error: 'UNAUTHORIZED_ISSUER' };
+          }
+        }
+      }
+    } else if (!isAuthorizedValidatorOrIssuer(state, tx)) {
+      return { valid: false, error: 'UNAUTHORIZED_ISSUER' };
     }
 
     if (state.getIssuer(issuerId)) {
@@ -65,6 +89,10 @@ export class IssuerUpdateModule implements TransactionModule {
 
     if (issuer.status === 'REVOKED') {
       return { valid: false, error: 'ISSUER_REVOKED' };
+    }
+
+    if (tx.sender !== issuer.issuerId && CryptoManager.deriveNodeId(issuer.publicKey) !== tx.sender) {
+      return { valid: false, error: 'UNAUTHORIZED_ISSUER' };
     }
 
     return { valid: true };

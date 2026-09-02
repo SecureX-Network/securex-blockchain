@@ -1,5 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'crypto';
 import { canonicalJSON } from '../../crypto/hashing/hash';
+import { PROTOCOL_VERSION, TRANSACTION_VERSION } from '../version';
 
 export enum TransactionType {
   ISSUER_REGISTER = 'ISSUER_REGISTER',
@@ -13,6 +15,8 @@ export enum TransactionType {
   KEY_ROTATE = 'KEY_ROTATE',
   BATCH_ANCHOR = 'BATCH_ANCHOR',
 }
+
+export const ALL_TRANSACTION_TYPES = Object.values(TransactionType);
 
 export interface TransactionPayload {
   [key: string]: any;
@@ -58,6 +62,20 @@ export function getSigningData(tx: UnsignedTransaction): string {
   });
 }
 
+export function computeTransactionHash(tx: Transaction): string {
+  const hashData = canonicalJSON({
+    protocolVersion: tx.protocolVersion,
+    transactionVersion: tx.transactionVersion,
+    id: tx.id,
+    type: tx.type,
+    timestamp: tx.timestamp,
+    sender: tx.sender,
+    nonce: tx.nonce,
+    payload: tx.payload,
+  });
+  return createHash('sha256').update(hashData).digest('hex');
+}
+
 export function buildTransaction(
   type: TransactionType,
   sender: string,
@@ -69,6 +87,27 @@ export function buildTransaction(
   return {
     protocolVersion: '1.0',
     transactionVersion: 1,
+    id: id || createTransactionId(),
+    type,
+    timestamp: new Date().toISOString(),
+    sender,
+    nonce,
+    payload,
+    signature,
+  };
+}
+
+export function buildV2Transaction(
+  type: TransactionType,
+  sender: string,
+  nonce: number,
+  payload: TransactionPayload,
+  signature: string,
+  id?: string,
+): Transaction {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    transactionVersion: TRANSACTION_VERSION,
     id: id || createTransactionId(),
     type,
     timestamp: new Date().toISOString(),

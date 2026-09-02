@@ -8,6 +8,11 @@ import { canonicalJSON } from '../crypto/hashing/hash';
 import { MerkleTree } from '../merkle/merkle';
 import { getLogger } from '../utils/logger';
 import { createHash } from 'crypto';
+import { ObservabilityService } from '../services/observability';
+import { CredentialVerificationService } from '../services/verification';
+import { ChainEvidenceProvider } from '../services/evidence';
+import { MerkleProofService } from '../merkle/proofs';
+import { PROTOCOL_VERSION } from '../core/version';
 
 export interface ApiServerConfig {
   port: number;
@@ -23,6 +28,9 @@ export class ApiServer {
   private consensus: PermissionedConsensus;
   private network: NodeNetwork;
   private server: any;
+  private observability: ObservabilityService;
+  private verification: CredentialVerificationService;
+  private evidence: ChainEvidenceProvider;
 
   constructor(
     config: ApiServerConfig,
@@ -34,6 +42,9 @@ export class ApiServer {
     this.chain = chain;
     this.consensus = consensus;
     this.network = network;
+    this.observability = new ObservabilityService(chain, consensus, network, config.nodeId);
+    this.verification = new CredentialVerificationService(chain);
+    this.evidence = new ChainEvidenceProvider(chain);
     this.app = express();
     this.app.use(express.json({ limit: '2mb' }));
     this.setupRoutes();
@@ -41,6 +52,9 @@ export class ApiServer {
 
   private setupRoutes(): void {
     this.app.get('/health', (_req, res) => this.health(res));
+    this.app.get('/ready', (_req, res) => this.ready(res));
+    this.app.get('/status', (_req, res) => this.status(res));
+    this.app.get('/metrics', (_req, res) => this.metrics(res));
     this.app.get('/blocks', (req, res) => this.getBlocks(req, res));
     this.app.get('/blocks/:height', (req, res) => this.getBlockByHeight(req, res));
     this.app.get('/blocks/hash/:hash', (req, res) => this.getBlockByHash(req, res));
@@ -51,6 +65,9 @@ export class ApiServer {
     this.app.get('/state/credentials/:id', (req, res) => this.getCredential(req, res));
     this.app.get('/state/credentials/:id/history', (req, res) => this.getCredentialHistory(req, res));
     this.app.post('/state/credentials/:id/proof', (req, res) => this.getCredentialProof(req, res));
+    this.app.get('/verify/:id', (req, res) => this.verifyCredential(req, res));
+    this.app.post('/verify/:id', (req, res) => this.verifyCredential(req, res));
+    this.app.get('/evidence/:id', (req, res) => this.getEvidence(req, res));
     this.app.get('/state/validators', (_req, res) => this.getValidators(res));
     this.app.get('/network/peers', (_req, res) => this.getPeers(res));
     this.app.get('/network/status', (_req, res) => this.getNetworkStatus(res));
@@ -68,12 +85,41 @@ export class ApiServer {
   private health(res: Response): void {
     this.ok(res, {
       nodeId: this.config.nodeId,
-      version: '1.0',
+      version: '2.0.0',
+      protocolVersion: PROTOCOL_VERSION,
       height: this.chain.getHeight(),
       peerCount: this.network.getPeerCount(),
       uptime: process.uptime(),
-      status: 'UP',
+      status: this.observability.isHealthy() ? 'UP' : 'DEGRADED',
     });
+  }
+
+  private ready(res: Response): void {
+    this.ok(res, {
+      ready: this.observability.isReady(),
+      height: this.chain.getHeight(),
+      stateValidated: this.chain.getStorage().stateStore.getHeight() >= this.chain.getHeight(),
+    });
+  }
+
+  private status(res: Response): void {
+    this.ok(res, this.observability.getStatus());
+  }
+
+  private metrics(res: Response): void {
+    this.ok(res, this.observability.getMetrics());
+  }
+
+  private verifyCredential(req: Request, res: Response): void {
+    const id = req.params.id;
+    const evidence = this.verification.verifyCredentialSync(id);
+    this.ok(res, evidence);
+  }
+
+  private getEvidence(req: Request, res: Response): void {
+    const id = req.params.id;
+    const result = this.evidence.verifyInclusion(id);
+    this.ok(res, result);
   }
 
   private getBlocks(req: Request, res: Response): void {

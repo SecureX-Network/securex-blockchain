@@ -109,3 +109,61 @@ The following are deliberate, documented limitations of the current implementati
 ## Related
 
 See [THREAT_MODEL.md](./THREAT_MODEL.md) for the STRIDE-based analysis and honest residual-risk documentation.
+
+---
+
+# SecureX Blockchain V2 Hardening Addendum
+
+The V2 protocol (`protocolVersion '2.0'`, `transactionVersion 2`, `block.header.version >= 2`) adds a strict validation path on top of the V1 security model. V1 transactions/blocks keep the original permissive path for backward compatibility.
+
+## Signature verification (mandatory)
+
+Every V2 transaction's Ed25519 signature is verified against the **sender's resolved public key** before any state logic runs:
+
+- `resolveSenderKey` maps the `sender` to either an authorized validator key or an ACTIVE issuer's key.
+- A transaction whose `sender` is not a known validator/issuer is rejected (`UNAUTHORIZED_SENDER`).
+- A transaction whose signature does not match that key is rejected (`INVALID_SIGNATURE`).
+- `computeTransactionHash` provides a canonical, integrity-bound transaction digest.
+
+This closes the V1 gap where a transaction with a valid shape but arbitrary/absent sender identity could be accepted by permissive module checks.
+
+## Replay protection (mandatory)
+
+- Each V2 sender maintains a **monotonic nonce** in state.
+- `nonce <= storedNonce` → `REPLAYED_TRANSACTION` (1-based: a fresh sender starts at 1).
+- `setNonce` only advances forward, so a lower/equal nonce can never be replayed, even offline, since the signature still binds the nonce in the signing data.
+
+## Issuer authorization & lifecycle state machine (V2-only)
+
+- Issuer/credential/revocation modules enforce that only the ACTIVE, authorized issuer may mutate its own credentials.
+- Lifecycle transitions must follow the shared `canTransition` table via `validateTransition` (`src/core/state/state.ts`):
+  - `ISSUED -> ACTIVE`, `ACTIVE -> SUSPENDED/REVOKED`, `SUSPENDED -> ACTIVE/REVOKED`, etc.
+  - An illegal/unknown transition (e.g. suspend a REVOKED credential) → `INVALID_STATE_TRANSITION`.
+  - Duplicate issuance → `CREDENTIAL_ALREADY_EXISTS`.
+
+## Block integrity (V2-only)
+
+For blocks with `header.version >= 2`, the block validator additionally enforces:
+
+- `expectedBlockHash === block.hash` (`INVALID_BLOCK`) — the hash binds header + canonical transaction set.
+- Duplicate transaction IDs within a block are rejected (`DUPLICATE_TRANSACTION`).
+- Merkle root is computed from canonical serialization of each transaction (`version >= 2`), so tampering with any transaction changes the root.
+
+## Chain recovery / evidence (V2)
+
+- `ChainRecovery` re-validates every stored block's hash, previous-link, and Merkle root at startup; storage tampering is detected and `recovered=false` is reported.
+- `BlockchainEvidenceProvider` and `CredentialVerificationService` let a verifier confirm a credential's on-chain anchor (containing block + Merkle inclusion proof) and issuer recognition, without relying on an untrusted third party.
+
+## Demonstration
+
+`npx ts-node scripts/attack-simulation.ts` runs a self-contained SIH (Simulate · Test · Block · Evidence) loop and shows all eight attack vectors being rejected with concrete error strings. `tests/security/v2-attacks.test.ts` codifies the same checks as automated tests.
+
+## Versioned enforcement summary
+
+| Control | V1 | V2 |
+| --- | --- | --- |
+| Signature/sender resolution | permissive | mandatory (`INVALID_SIGNATURE` / `UNAUTHORIZED_SENDER`) |
+| Nonce replay | original behavior | `REPLAYED_TRANSACTION` |
+| Issuer lifecycle transitions | permissive | `INVALID_STATE_TRANSITION` |
+| Block hash integrity | — | `INVALID_BLOCK` when `version >= 2` |
+| Duplicate tx in block | — | `DUPLICATE_TRANSACTION` |

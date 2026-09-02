@@ -2,6 +2,26 @@
 
 All notable changes to the CTN Blockchain are documented in this file.
 
+## [0.2.0] - 2026-09-02
+
+### Added — SecureX Blockchain V2 (hardening, backward compatible)
+
+- **Protocol versioning** (`src/core/version.ts`, `src/core/errors.ts`): `protocolVersion '2.0'`, `transactionVersion 2`, `block.header.version 2`; supported-version helpers; structured `BlockchainError` enum + `BlockchainResult`/`ok`/`fail`.
+- **Transaction hardening** (`src/core/transaction/transaction.ts`, `src/core/validation/tx-validator.ts`): `buildV2Transaction`, `computeTransactionHash`, mandatory signature verification against resolved sender key (`INVALID_SIGNATURE` / `UNAUTHORIZED_SENDER`), monotonic nonce replay protection (`REPLAYED_TRANSACTION`).
+- **Issuer/credential authorization (V2-only)** (`src/modules/{issuers,credentials,revocation}`): only ACTIVE authorized issuers may mutate their own credentials; lifecycle transitions enforced via the shared `canTransition` state machine in `src/core/state/state.ts` (`INVALID_STATE_TRANSITION`).
+- **Block hardening (V2-only)** (`src/core/validation/block-validator.ts`, `src/core/chain.ts`): block hash integrity (`INVALID_BLOCK`), duplicate transaction rejection (`DUPLICATE_TRANSACTION`), version-aware Merkle root, `createBlockV2`, `getBlockByHeight`, `getBlocks`.
+- **Merkle proofs** (`src/merkle/proofs.ts`): `MerkleProofService` for transaction inclusion proofs and anchor-hash lists.
+- **Services** (`src/services/`): `CredentialVerificationService`, `BlockchainEvidenceProvider`/`ChainEvidenceProvider`, `ChainRecovery` (startup tamper detection), `ObservabilityService`.
+- **API + client** (`src/api/server.ts`, `src/api/client.ts`): `/ready`, `/status`, `/metrics`, `/verify/:id`, `/evidence/:id` endpoints and client methods.
+- **Determinism tests** (`tests/unit/determinism.test.ts`): two independent nodes converge on identical block hashes, Merkle roots, heights, and state.
+- **Attack simulation** (`scripts/attack-simulation.ts`): SIH loop demonstrating eight attack vectors being blocked with concrete errors.
+- **Tests**: `tests/unit/{merkle-proofs,credential-lifecycle,v2-verification,determinism}` and `tests/security/v2-attacks`.
+- Docs: V2 addenda in `docs/SECURITY_MODEL.md` and `docs/ENGINEERING_SUMMARY.md`.
+
+### Notes
+
+- V1 (`protocolVersion '1.0'`, `transactionVersion 1`, `block.header.version 1`) remains fully supported; V1 tests continue to pass. The new strict validation applies only to V2.
+
 ## [0.1.0] - 2026-09-01
 
 ### Added

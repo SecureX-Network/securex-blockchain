@@ -4,6 +4,9 @@ import { MerkleTree } from '../../merkle/merkle';
 import { CryptoManager } from '../../crypto/signatures/crypto';
 import { StateManager } from '../state/state';
 import { TransactionValidator } from './tx-validator';
+import { isSupportedBlockVersion } from '../version';
+import { BlockchainError } from '../errors';
+import { computeTransactionHash } from '../transaction/transaction';
 
 export interface TipInfo {
   height: number;
@@ -17,29 +20,41 @@ export class BlockValidator {
     this.txValidator = txValidator;
   }
 
-  computeMerkleRoot(transactions: any[]): string {
+  computeMerkleRoot(transactions: any[], version: number = 1): string {
     if (transactions.length === 0) return '0'.repeat(64);
-    const txHashes = transactions.map(tx => (typeof tx.id === 'string' ? tx.id : sha256(tx)));
+    const txHashes = transactions.map(tx =>
+      version >= 2 ? sha256(canonicalJSON(tx)) : (typeof tx.id === 'string' ? tx.id : sha256(tx)),
+    );
     const tree = new MerkleTree(txHashes);
     return tree.getRoot();
   }
 
   validate(state: StateManager, block: Block, tip: TipInfo): string | null {
-    if (!block || typeof block !== 'object') return 'INVALID_BLOCK';
-    if (!block.header || !Array.isArray(block.transactions)) return 'INVALID_BLOCK_STRUCTURE';
+    if (!block || typeof block !== 'object') return BlockchainError.INVALID_BLOCK;
+    if (!block.header || !Array.isArray(block.transactions)) return BlockchainError.INVALID_BLOCK_STRUCTURE;
 
-    if (block.header.version !== 1) return 'UNSUPPORTED_BLOCK_VERSION';
+    if (!isSupportedBlockVersion(block.header.version)) return BlockchainError.UNSUPPORTED_BLOCK_VERSION;
 
     if (block.header.height === 0) {
       return this.validateGenesis(block);
     }
 
-    if (block.header.height !== tip.height + 1) return 'INVALID_BLOCK_HEIGHT';
+    if (block.header.height !== tip.height + 1) return BlockchainError.INVALID_BLOCK_HEIGHT;
 
-    if (block.header.previousHash !== tip.hash) return 'INVALID_PREVIOUS_HASH';
+    if (block.header.previousHash !== tip.hash) return BlockchainError.INVALID_PREVIOUS_HASH;
 
-    const merkleRoot = this.computeMerkleRoot(block.transactions);
-    if (merkleRoot !== block.header.merkleRoot) return 'INVALID_MERKLE_ROOT';
+    const merkleRoot = this.computeMerkleRoot(block.transactions, block.header.version);
+    if (merkleRoot !== block.header.merkleRoot) return BlockchainError.INVALID_MERKLE_ROOT;
+
+    const expectedBlockHash = this.computeBlockHash(block.header, block.transactions);
+    if (block.header.version >= 2 && expectedBlockHash !== block.hash) return BlockchainError.INVALID_BLOCK;
+
+    const seenTxIds = new Set<string>();
+    for (const tx of block.transactions) {
+      if (!tx?.id) return BlockchainError.INVALID_TX_ID;
+      if (seenTxIds.has(tx.id)) return BlockchainError.DUPLICATE_TRANSACTION;
+      seenTxIds.add(tx.id);
+    }
 
     const signingData = getBlockSigningData({
       header: block.header,
@@ -47,8 +62,8 @@ export class BlockValidator {
     });
 
     const proposer = state.getValidator(block.header.proposerId);
-    if (!proposer) return 'UNKNOWN_VALIDATOR';
-    if (!state.isAuthorizedValidator(block.header.proposerId)) return 'UNAUTHORIZED_VALIDATOR';
+    if (!proposer) return BlockchainError.UNKNOWN_VALIDATOR;
+    if (!state.isAuthorizedValidator(block.header.proposerId)) return BlockchainError.UNAUTHORIZED_VALIDATOR;
 
     let proposerSigned = false;
     for (const sig of block.validatorSignatures) {
@@ -58,7 +73,7 @@ export class BlockValidator {
         }
       }
     }
-    if (!proposerSigned) return 'INVALID_PROPOSER_SIGNATURE';
+    if (!proposerSigned) return BlockchainError.INVALID_PROPOSER_SIGNATURE;
 
     for (const tx of block.transactions) {
       const error = this.txValidator.validate(state, tx);
@@ -70,10 +85,15 @@ export class BlockValidator {
     return null;
   }
 
+  computeBlockHash(header: any, transactions: any[]): string {
+    const signingData = getBlockSigningData({ header, transactions });
+    return SHA256Hasher.hash(signingData);
+  }
+
   validateGenesis(block: Block): string | null {
-    if (block.header.previousHash !== GENESIS_HASH) return 'INVALID_GENESIS_PREVIOUS_HASH';
-    if (block.header.height !== 0) return 'INVALID_GENESIS_HEIGHT';
-    if (block.transactions.length > 0) return 'GENESIS_MUST_BE_EMPTY';
+    if (block.header.previousHash !== GENESIS_HASH) return BlockchainError.INVALID_GENESIS_PREVIOUS_HASH;
+    if (block.header.height !== 0) return BlockchainError.INVALID_GENESIS_HEIGHT;
+    if (block.transactions.length > 0) return BlockchainError.GENESIS_MUST_BE_EMPTY;
     return null;
   }
 }

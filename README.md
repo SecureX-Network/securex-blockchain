@@ -14,6 +14,26 @@ CTN Blockchain is a TypeScript/Node.js blockchain purpose-built for institutiona
 - **REST API** — client-facing HTTP interface for submitting transactions and querying state.
 - **CLI** — node controls and admin operations.
 
+## SecureX Blockchain V2 (Hardening)
+
+On top of the V1 foundation, the V2 protocol (`protocolVersion "2.0"`, `transactionVersion 2`, `block.header.version >= 2`) adds a strict, credential-native hardening path while remaining fully backward compatible with V1 — all V1 tests stay green.
+
+- **Signature & sender verification** — every V2 transaction's Ed25519 signature is verified against the sender's resolved public key (`INVALID_SIGNATURE` / `UNAUTHORIZED_SENDER`).
+- **Replay protection** — monotonic per-sender nonces reject replays (`REPLAYED_TRANSACTION`).
+- **Issuer authorization & lifecycle state machine** — only an ACTIVE, authorized issuer may mutate its credentials, and only via allowed transitions (`INVALID_STATE_TRANSITION`).
+- **Block integrity** — V2 blocks enforce hash integrity (`INVALID_BLOCK`), duplicate-tx rejection, and version-aware Merkle roots.
+- **Merkle proofs** — `src/merkle/proofs.ts` provides inclusion-proof creation/verification.
+- **Services** — `CredentialVerificationService`, `BlockchainEvidenceProvider`, `ChainRecovery` (startup tamper detection), and `ObservabilityService` (with `/ready`, `/metrics`, `/verify/:id`, `/evidence/:id` endpoints).
+- **Determinism** — independent nodes with identical inputs converge on identical hashes, roots, and state (`tests/unit/determinism.test.ts`).
+- **Attacks demonstrably blocked** — run the SIH loop to see eight attack vectors rejected with concrete errors.
+
+```bash
+# Security/attack simulation (Simulate · Test · Block · Evidence)
+npx ts-node scripts/attack-simulation.ts
+```
+
+See [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) (V2 addendum) and [docs/ENGINEERING_SUMMARY.md](docs/ENGINEERING_SUMMARY.md) for details.
+
 ## Architecture Overview
 
 ```

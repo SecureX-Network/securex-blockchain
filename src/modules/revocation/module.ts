@@ -2,24 +2,16 @@ import {
   Transaction,
   TransactionType,
 } from '../../core/transaction/transaction';
-import { StateManager, CredentialStatus } from '../../core/state/state';
+import { StateManager, CredentialStatus, canTransition } from '../../core/state/state';
 import {
   TransactionModule,
   ValidationResult,
   ApplyContext,
 } from '../registry';
+import { CryptoManager } from '../../crypto/signatures/crypto';
 
-const VALID_TRANSITIONS: Record<string, CredentialStatus[]> = {
-  [CredentialStatus.ACTIVE]: [CredentialStatus.REVOKED, CredentialStatus.SUSPENDED, CredentialStatus.EXPIRED],
-  [CredentialStatus.SUSPENDED]: [CredentialStatus.ACTIVE, CredentialStatus.REVOKED, CredentialStatus.EXPIRED],
-  [CredentialStatus.REVOKED]: [],
-  [CredentialStatus.EXPIRED]: [CredentialStatus.ACTIVE],
-};
-
-function canTransition(from: string, to: string): boolean {
-  const allowed = VALID_TRANSITIONS[from];
-  if (!allowed) return false;
-  return allowed.includes(to as CredentialStatus);
+function canTransition2(from: string, to: CredentialStatus): boolean {
+  return canTransition(from as CredentialStatus, to);
 }
 
 function getCredential(state: StateManager, credentialId: string): { error: string; credential?: never } | { error?: never; credential: NonNullable<ReturnType<StateManager['getCredential']>> } {
@@ -28,6 +20,24 @@ function getCredential(state: StateManager, credentialId: string): { error: stri
     return { error: 'UNKNOWN_CREDENTIAL' };
   }
   return { credential };
+}
+
+function isAuthorizedActor(tx: Transaction, issuerId: string, issuerPublicKey: string): boolean {
+  if (tx.sender === issuerId) return true;
+  return CryptoManager.deriveNodeId(issuerPublicKey) === tx.sender;
+}
+
+function assertIssuerAuthorization(state: StateManager, tx: Transaction, credentialId: string): string | null {
+  if (tx.protocolVersion === '1.0' && tx.transactionVersion === 1) return null;
+  const credential = state.getCredential(credentialId);
+  if (!credential) return 'UNKNOWN_CREDENTIAL';
+
+  const issuer = state.getIssuer(credential.issuerId);
+  if (!issuer) return 'UNKNOWN_ISSUER';
+  if (issuer.status !== 'ACTIVE') return 'UNAUTHORIZED_ISSUER';
+  if (!isAuthorizedActor(tx, credential.issuerId, issuer.publicKey)) return 'UNAUTHORIZED_ISSUER';
+
+  return null;
 }
 
 export class RevokeModule implements TransactionModule {
@@ -42,11 +52,14 @@ export class RevokeModule implements TransactionModule {
     const { credential, error } = getCredential(state, credentialId);
     if (error) return { valid: false, error };
 
+    const authErr = assertIssuerAuthorization(state, tx, credentialId);
+    if (authErr) return { valid: false, error: authErr };
+
     if (credential!.status === CredentialStatus.REVOKED) {
       return { valid: false, error: 'CREDENTIAL_ALREADY_REVOKED' };
     }
 
-    if (!canTransition(credential!.status, CredentialStatus.REVOKED)) {
+    if (!canTransition2(credential!.status, CredentialStatus.REVOKED)) {
       return { valid: false, error: 'INVALID_STATE_TRANSITION' };
     }
 
@@ -84,11 +97,14 @@ export class SuspendModule implements TransactionModule {
     const { credential, error } = getCredential(state, credentialId);
     if (error) return { valid: false, error };
 
+    const authErr = assertIssuerAuthorization(state, tx, credentialId);
+    if (authErr) return { valid: false, error: authErr };
+
     if (credential!.status === CredentialStatus.SUSPENDED) {
       return { valid: false, error: 'CREDENTIAL_ALREADY_SUSPENDED' };
     }
 
-    if (!canTransition(credential!.status, CredentialStatus.SUSPENDED)) {
+    if (!canTransition2(credential!.status, CredentialStatus.SUSPENDED)) {
       return { valid: false, error: 'INVALID_STATE_TRANSITION' };
     }
 
@@ -125,6 +141,9 @@ export class ReinstateModule implements TransactionModule {
 
     const { credential, error } = getCredential(state, credentialId);
     if (error) return { valid: false, error };
+
+    const authErr = assertIssuerAuthorization(state, tx, credentialId);
+    if (authErr) return { valid: false, error: authErr };
 
     if (credential!.status !== CredentialStatus.SUSPENDED) {
       return { valid: false, error: 'INVALID_STATE_TRANSITION: only suspended can be reinstated' };
@@ -165,6 +184,9 @@ export class ReissueModule implements TransactionModule {
 
     const { credential, error } = getCredential(state, credentialId);
     if (error) return { valid: false, error };
+
+    const authErr = assertIssuerAuthorization(state, tx, credentialId);
+    if (authErr) return { valid: false, error: authErr };
 
     if (state.getCredential(newCredentialId)) {
       return { valid: false, error: 'NEW_CREDENTIAL_ALREADY_EXISTS' };

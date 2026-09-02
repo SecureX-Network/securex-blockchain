@@ -8,6 +8,7 @@ import {
   ValidationResult,
   ApplyContext,
 } from '../registry';
+import { CryptoManager } from '../../crypto/signatures/crypto';
 
 export class CredentialModule implements TransactionModule {
   readonly type = TransactionType.CREDENTIAL_ISSUE;
@@ -33,11 +34,22 @@ export class CredentialModule implements TransactionModule {
       return { valid: false, error: 'UNAUTHORIZED_ISSUER' };
     }
 
+    if (tx.protocolVersion !== '1.0' || tx.transactionVersion !== 1) {
+      if (!this.isAuthorizedActor(tx, issuerId, issuer.publicKey)) {
+        return { valid: false, error: 'UNAUTHORIZED_ISSUER' };
+      }
+    }
+
     if (state.getCredential(credentialId)) {
       return { valid: false, error: 'CREDENTIAL_ALREADY_EXISTS' };
     }
 
     return { valid: true };
+  }
+
+  protected isAuthorizedActor(tx: Transaction, expectedIssuerId: string, issuerPublicKey: string): boolean {
+    if (tx.sender === expectedIssuerId) return true;
+    return CryptoManager.deriveNodeId(issuerPublicKey) === tx.sender;
   }
 
   apply(state: StateManager, tx: Transaction, context: ApplyContext): void {

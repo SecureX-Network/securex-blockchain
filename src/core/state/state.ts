@@ -1,4 +1,5 @@
 import { StateStoreInterface } from '../../storage/interfaces';
+import { BlockchainError } from '../errors';
 
 export enum CredentialStatus {
   CREATED = 'CREATED',
@@ -8,6 +9,29 @@ export enum CredentialStatus {
   REVOKED = 'REVOKED',
   EXPIRED = 'EXPIRED',
   REISSUED = 'REISSUED',
+}
+
+const VALID_TRANSITIONS: Record<CredentialStatus, CredentialStatus[]> = {
+  [CredentialStatus.CREATED]: [CredentialStatus.ACTIVE, CredentialStatus.REVOKED],
+  [CredentialStatus.ISSUED]: [CredentialStatus.ACTIVE, CredentialStatus.REVOKED],
+  [CredentialStatus.ACTIVE]: [CredentialStatus.REVOKED, CredentialStatus.SUSPENDED, CredentialStatus.EXPIRED, CredentialStatus.REISSUED],
+  [CredentialStatus.SUSPENDED]: [CredentialStatus.ACTIVE, CredentialStatus.REVOKED, CredentialStatus.EXPIRED],
+  [CredentialStatus.REVOKED]: [CredentialStatus.REISSUED],
+  [CredentialStatus.EXPIRED]: [CredentialStatus.ACTIVE, CredentialStatus.REISSUED],
+  [CredentialStatus.REISSUED]: [],
+};
+
+export function canTransition(from: CredentialStatus, to: CredentialStatus): boolean {
+  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+export function describeCredentialStatus(status: CredentialStatus): string {
+  return status;
+}
+
+export interface LifecycleValidationResult {
+  valid: boolean;
+  error?: BlockchainError;
 }
 
 export interface IssuerRecord {
@@ -168,6 +192,27 @@ export class StateManager {
   isAuthorizedValidator(validatorId: string): boolean {
     const v = this.state.validators.get(validatorId);
     return v !== undefined && v.status === 'ACTIVE';
+  }
+
+  validateTransition(credentialId: string, to: CredentialStatus): LifecycleValidationResult {
+    const credential = this.getCredential(credentialId);
+    if (!credential) {
+      return { valid: false, error: BlockchainError.UNKNOWN_CREDENTIAL };
+    }
+    if (!canTransition(credential.status, to)) {
+      return { valid: false, error: BlockchainError.INVALID_STATE_TRANSITION };
+    }
+    return { valid: true };
+  }
+
+  isActiveIssuer(issuerId: string): boolean {
+    const issuer = this.getIssuer(issuerId);
+    return issuer !== undefined && issuer.status === 'ACTIVE';
+  }
+
+  isAuthorizedIssuer(issuerId: string, expectedIssuerId: string): boolean {
+    if (issuerId !== expectedIssuerId) return false;
+    return this.isActiveIssuer(issuerId);
   }
 
   getNonce(sender: string): number {
