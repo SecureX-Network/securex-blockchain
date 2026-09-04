@@ -11,6 +11,7 @@ describe('Credential lifecycle state machine', () => {
   const addCredential = (id: string, status: CredentialStatus = CredentialStatus.ACTIVE) => {
     state.setCredential({
       credentialId: id,
+      publicCredentialId: 'SX-2F9C-A41B-8D7E',
       issuerId: 'issuer-1',
       credentialHash: 'a'.repeat(64),
       status,

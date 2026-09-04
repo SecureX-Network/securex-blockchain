@@ -29,6 +29,7 @@ export interface DemoInstitution {
   name: string;
   credentials: Array<{
     credentialId: string;
+    publicCredentialId: string;
     type: string;
     subject: string;
     hashData: string;
@@ -41,26 +42,26 @@ const DEMO_INSTITUTIONS: DemoInstitution[] = [
     issuerId: 'securex-demo-university',
     name: 'SecureX Demo University',
     credentials: [
-      { credentialId: 'sxu-btech-2026-0001', type: 'B.Tech', subject: 'Computer Science Engineering', hashData: 'btech-cse-2026', lifecycle: ['suspend'] },
-      { credentialId: 'sxu-mtech-2026-0001', type: 'M.Tech', subject: 'Artificial Intelligence', hashData: 'mtech-ai-2026' },
-      { credentialId: 'sxu-mba-2026-0001', type: 'MBA', subject: 'Business Administration', hashData: 'mba-2026', lifecycle: ['suspend', 'revoke'] },
+      { credentialId: 'sxu-btech-2026-0001', publicCredentialId: 'SX-2F9C-A41B-8D7E', type: 'B.Tech', subject: 'Computer Science Engineering', hashData: 'btech-cse-2026', lifecycle: ['suspend'] },
+      { credentialId: 'sxu-mtech-2026-0001', publicCredentialId: 'SX-7A31-C0E4-19F6', type: 'M.Tech', subject: 'Artificial Intelligence', hashData: 'mtech-ai-2026' },
+      { credentialId: 'sxu-mba-2026-0001', publicCredentialId: 'SX-4B8D-6A2F-C701', type: 'MBA', subject: 'Business Administration', hashData: 'mba-2026', lifecycle: ['suspend', 'revoke'] },
     ],
   },
   {
     issuerId: 'securex-demo-technical-institute',
     name: 'SecureX Technical Institute',
     credentials: [
-      { credentialId: 'sxti-bca-2026-0001', type: 'BCA', subject: 'Computer Applications', hashData: 'bca-2026' },
-      { credentialId: 'sxti-mca-2026-0001', type: 'MCA', subject: 'Computer Applications', hashData: 'mca-2026', lifecycle: ['suspend'] },
-      { credentialId: 'sxti-pro-cert-2026-0001', type: 'Professional Certification', subject: 'Blockchain Engineering', hashData: 'pro-cert-blockchain-2026' },
+      { credentialId: 'sxti-bca-2026-0001', publicCredentialId: 'SX-9C4E-2D80-5A31', type: 'BCA', subject: 'Computer Applications', hashData: 'bca-2026' },
+      { credentialId: 'sxti-mca-2026-0001', publicCredentialId: 'SX-3A17-B9F2-6D48', type: 'MCA', subject: 'Computer Applications', hashData: 'mca-2026', lifecycle: ['suspend'] },
+      { credentialId: 'sxti-pro-cert-2026-0001', publicCredentialId: 'SX-8E50-1C73-A9B4', type: 'Professional Certification', subject: 'Blockchain Engineering', hashData: 'pro-cert-blockchain-2026' },
     ],
   },
   {
     issuerId: 'securex-demo-professional-academy',
     name: 'SecureX Professional Academy',
     credentials: [
-      { credentialId: 'sxpa-intern-2026-0001', type: 'Internship Certificate', subject: 'Cybersecurity Intern', hashData: 'intern-cyber-2026', lifecycle: ['revoke'] },
-      { credentialId: 'sxpa-pro-cert-2026-0001', type: 'Professional Certification', subject: 'Data Privacy Officer', hashData: 'pro-cert-dpo-2026' },
+      { credentialId: 'sxpa-intern-2026-0001', publicCredentialId: 'SX-6D29-B8E5-0F4C', type: 'Internship Certificate', subject: 'Cybersecurity Intern', hashData: 'intern-cyber-2026', lifecycle: ['revoke'] },
+      { credentialId: 'sxpa-pro-cert-2026-0001', publicCredentialId: 'SX-5A40-9F61-D2B7', type: 'Professional Certification', subject: 'Data Privacy Officer', hashData: 'pro-cert-dpo-2026' },
     ],
   },
 ];
@@ -145,6 +146,7 @@ export async function runDemoDataSeed(options?: {
         TransactionType.CREDENTIAL_ISSUE,
         {
           credentialId: cred.credentialId,
+          publicCredentialId: cred.publicCredentialId,
           issuerId: inst.issuerId,
           credentialHash: demoHash(cred.hashData),
           schemaVersion: '1.0',
@@ -202,8 +204,8 @@ async function main(): Promise<void> {
 
   for (const inst of DEMO_INSTITUTIONS) {
     for (const cred of inst.credentials) {
-      const res = await client.verifyCredential(cred.credentialId);
-      console.log(`\n  Verify ${cred.credentialId} (${cred.type}) -> ${res.data?.status}`);
+      const res = await client.verifyCredential(cred.publicCredentialId);
+      console.log(`\n  Verify ${cred.publicCredentialId} [${cred.credentialId}] (${cred.type}) -> ${res.data?.status}`);
     }
   }
 

@@ -1,5 +1,9 @@
 import { StateStoreInterface } from '../../storage/interfaces';
 import { BlockchainError } from '../errors';
+import {
+  generatePublicCredentialId,
+  isPublicCredentialId,
+} from '../../crypto/identity/public-credential-id';
 
 export enum CredentialStatus {
   CREATED = 'CREATED',
@@ -46,6 +50,8 @@ export interface IssuerRecord {
 
 export interface CredentialRecord {
   credentialId: string;
+  /** Stable, user-facing public verification ID (SX-XXXX-XXXX-XXXX). Distinct from credentialId. Immutable after issuance. */
+  publicCredentialId: string;
   issuerId: string;
   credentialHash: string;
   status: CredentialStatus;
@@ -89,6 +95,8 @@ export interface ValidatorRecord {
 export interface ChainState {
   issuers: Map<string, IssuerRecord>;
   credentials: Map<string, CredentialRecord>;
+  /** Reverse index: publicCredentialId -> internal credentialId (enforces uniqueness + O(1) lookup). */
+  publicCredentials: Map<string, string>;
   keys: Map<string, KeyRecord>;
   validators: Map<string, ValidatorRecord>;
   nonces: Map<string, number>;
@@ -103,6 +111,7 @@ export class StateManager {
     this.state = {
       issuers: new Map(),
       credentials: new Map(),
+      publicCredentials: new Map(),
       keys: new Map(),
       validators: new Map(),
       nonces: new Map(),
@@ -123,7 +132,15 @@ export class StateManager {
       keys: new Map(Object.entries(json.keys || {})),
       validators: new Map(Object.entries(json.validators || {})),
       nonces: new Map(Object.entries(json.nonces || {})),
+      publicCredentials: new Map(Object.entries(json.publicCredentials || {})),
     };
+    // Backfill the reverse index from stored credentials (migration-safe: keeps
+    // existing chains queryable even before their public IDs were indexed).
+    for (const credential of this.state.credentials.values()) {
+      if (credential.publicCredentialId) {
+        this.state.publicCredentials.set(credential.publicCredentialId, credential.credentialId);
+      }
+    }
   }
 
   toJSON(): any {
@@ -133,6 +150,7 @@ export class StateManager {
       keys: Object.fromEntries(this.state.keys),
       validators: Object.fromEntries(this.state.validators),
       nonces: Object.fromEntries(this.state.nonces),
+      publicCredentials: Object.fromEntries(this.state.publicCredentials),
     };
   }
 
@@ -162,7 +180,48 @@ export class StateManager {
     return Array.from(this.state.credentials.values());
   }
 
+  /** Resolve a public credential ID (SX-...) to the internal credential record. */
+  getCredentialByPublicId(publicCredentialId: string): CredentialRecord | undefined {
+    const internalId = this.state.publicCredentials.get(publicCredentialId);
+    if (!internalId) return undefined;
+    return this.state.credentials.get(internalId);
+  }
+
+  /** True when a public credential ID is already in use (uniqueness check). */
+  publicIdExists(publicCredentialId: string): boolean {
+    return this.state.publicCredentials.has(publicCredentialId);
+  }
+
+  private static readonly MAX_PUBLIC_ID_GENERATION_ATTEMPTS = 10;
+
+  /**
+   * Return a unique public credential ID for a newly created credential.
+   *
+   * Uses a caller-supplied ID when it is well-formed and currently unused;
+   * otherwise generates one from a CSPRNG and regenerates on the (exceedingly
+   * rare) collision so global uniqueness at the persistence layer is preserved.
+   */
+  generateUniquePublicCredentialId(requested?: string): string {
+    if (typeof requested === 'string' && isPublicCredentialId(requested) && !this.publicIdExists(requested)) {
+      return requested;
+    }
+    for (let attempt = 0; attempt < StateManager.MAX_PUBLIC_ID_GENERATION_ATTEMPTS; attempt++) {
+      const candidate = generatePublicCredentialId();
+      if (!this.publicIdExists(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error('UNABLE_TO_GENERATE_UNIQUE_PUBLIC_CREDENTIAL_ID');
+  }
+
   setCredential(credential: CredentialRecord): void {
+    // Maintain the reverse index and enforce 1:1 mapping. If a stale mapping
+    // for the same public ID exists pointing elsewhere, drop it — the new
+    // credential supersedes it for I/O (collision detection lives upstream in
+    // the issuance validation).
+    if (credential.publicCredentialId) {
+      this.state.publicCredentials.set(credential.publicCredentialId, credential.credentialId);
+    }
     this.state.credentials.set(credential.credentialId, credential);
   }
 

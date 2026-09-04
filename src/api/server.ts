@@ -24,6 +24,10 @@ import {
 import { AuditService } from '../services/audit';
 import { HistoryService } from '../services/history';
 import { TamperCheckService } from '../services/tamper-check';
+import { QrService } from '../services/qr';
+import { QrSigningKeyStore } from '../services/qr-keystore';
+import { isPublicCredentialId } from '../crypto/identity/public-credential-id';
+import * as path from 'path';
 
 export interface ApiServerConfig {
   port: number;
@@ -31,11 +35,15 @@ export interface ApiServerConfig {
   nodeId: string;
   publicKey: string;
   privateKey: string;
+  qrKeysDir?: string;
   allowedOrigins?: string[];
   corsEnabled?: boolean;
+  verifyBaseUrl?: string;
   requestLimitBytes?: number;
   logLevel?: string;
 }
+
+const HASH_RE = /^[a-f0-9]{64}$/i;
 
 export class ApiServer {
   private app: Express;
@@ -50,6 +58,7 @@ export class ApiServer {
   private audit: AuditService;
   private history: HistoryService;
   private tamper: TamperCheckService;
+  private qr: QrService;
 
   constructor(
     config: ApiServerConfig,
@@ -68,6 +77,11 @@ export class ApiServer {
     this.evidence = new ChainEvidenceProvider(chain);
     this.history = new HistoryService(chain);
     this.tamper = new TamperCheckService(chain, this.audit);
+    const qrKeysDir =
+      config.qrKeysDir ||
+      path.join(process.cwd(), '.ctn', 'issuers', 'qr-key');
+    const qrKeyStore = new QrSigningKeyStore(qrKeysDir);
+    this.qr = new QrService(chain, qrKeyStore.keyPairRef, config.verifyBaseUrl);
     this.app = express();
 
     this.app.use(requestIdMiddleware);
@@ -119,8 +133,13 @@ export class ApiServer {
     this.app.get('/state/keys/:id', (req, res) => this.getKey(req, res));
     this.app.get('/state/keys/owner/:ownerId', (req, res) => this.getKeysByOwner(req, res));
     this.app.get('/verify/:id', (req, res) => this.verifyCredential(req, res));
-    this.app.post('/verify/:id', (req, res) => this.verifyCredential(req, res));
+    this.app.post('/verify', (req, res) => this.verifyCredential(req, res));
+    this.app.post('/verify/qr', (req, res) => this.verifyQrReference(req, res));
     this.app.get('/evidence/:id', (req, res) => this.getEvidence(req, res));
+    this.app.get('/state/credentials/:id/evidence', (req, res) => this.getSecurityEvidence(req, res));
+    this.app.get('/state/credentials/:id/history', (req, res) => this.getCredentialHistory(req, res));
+    this.app.post('/state/credentials/:id/proof', (req, res) => this.getCredentialProof(req, res));
+    this.app.get('/qr/:credentialId', (req, res) => this.getQrReference(req, res));
     this.app.get('/state/validators', (_req, res) => this.getValidators(res));
     this.app.get('/network/peers', (_req, res) => this.getPeers(res));
     this.app.get('/network/status', (_req, res) => this.getNetworkStatus(res));
@@ -135,7 +154,7 @@ export class ApiServer {
   private health(res: Response): void {
     okResponse(res, {
       nodeId: this.config.nodeId,
-      version: '2.0.0',
+      version: '3.0.0',
       protocolVersion: PROTOCOL_VERSION,
       height: this.chain.getHeight(),
       peerCount: this.network.getPeerCount(),
@@ -160,10 +179,161 @@ export class ApiServer {
     okResponse(res, this.observability.getMetrics());
   }
 
+  private getQrReference(req: Request, res: Response): void {
+    const credentialId = req.params.credentialId;
+    if (!credentialId || typeof credentialId !== 'string') {
+      return failResponse(res, { code: 'INVALID_INPUT', message: 'credentialId required' }, 400);
+    }
+    okResponse(res, this.qr.referenceFor(credentialId));
+  }
+
+  private verifyQrReference(req: Request, res: Response): void {
+    const payload = req.body && req.body.payload;
+    if (!payload || typeof payload !== 'string') {
+      return failResponse(res, { code: 'INVALID_INPUT', message: 'QR payload required' }, 400);
+    }
+
+    const result = this.qr.verifyQrPayload(payload);
+    if (!result.ok) {
+      const message =
+        result.reason === 'expired'
+          ? 'This SecureX QR reference has expired. Ask the holder to refresh it.'
+          : 'This SecureX QR reference is not authentic or could not be resolved. Scan a valid SecureX QR.';
+      return failResponse(res, { code: 'INVALID_QR_REFERENCE', message }, 400);
+    }
+
+    const state = this.chain.getState();
+    const credential = state.getCredentialByPublicId(result.publicCredentialId);
+    if (!credential) {
+      return okResponse(res, {
+        status: VerificationStatus.NOT_FOUND,
+        credentialId: result.publicCredentialId,
+        errorMessage: 'Credential not found on the SecureX ledger.',
+      });
+    }
+
+    const base = this.verification.verifyCredentialSync(credential.credentialId);
+    const securityChecks = this.buildSecurityChecks(credential.credentialId, base);
+    okResponse(
+      res,
+      this.buildVerifyResponse(base, credential, securityChecks, undefined, result.publicCredentialId),
+    );
+  }
+
   private verifyCredential(req: Request, res: Response): void {
-    const id = req.params.id;
-    const evidence = this.verification.verifyCredentialSync(id);
-    okResponse(res, evidence);
+    const rawId = req.params.id || (req.body && req.body.credentialId) || '';
+    const documentHash = (req.body && req.body.documentHash) || undefined;
+    if (!rawId || typeof rawId !== 'string') {
+      return failResponse(res, { code: 'INVALID_INPUT', message: 'credentialId required' }, 400);
+    }
+    const id = rawId.trim();
+
+    const state = this.chain.getState();
+
+    const isPublic = isPublicCredentialId(id);
+    let internalId = id;
+    let resolvedPublicId: string | undefined;
+
+    if (isPublic) {
+      const credential = state.getCredentialByPublicId(id);
+      if (!credential) {
+        return okResponse(res, {
+          status: VerificationStatus.NOT_FOUND,
+          credentialId: id,
+          errorMessage: 'Credential not found on the SecureX ledger.',
+        });
+      }
+      internalId = credential.credentialId;
+      resolvedPublicId = id;
+    }
+
+    const base = this.verification.verifyCredentialSync(internalId);
+    const credential = state.getCredential(internalId);
+
+    const securityChecks = this.buildSecurityChecks(internalId, base);
+
+    const tamper = documentHash !== undefined ? this.runDocumentHashCheck(internalId, documentHash) : undefined;
+
+    okResponse(res, this.buildVerifyResponse(base, credential, securityChecks, tamper, resolvedPublicId));
+  }
+
+  private buildVerifyResponse(
+    base: any,
+    credential: any,
+    securityChecks: Record<string, boolean>,
+    tamper: any,
+    publicId?: string,
+  ): any {
+    const evidenceFor = {
+      status: base.status,
+      credentialId: publicId ?? base.credentialId,
+      credentialHash: base.credentialHash,
+      issuer: base.issuer,
+      lifecycle: base.lifecycle,
+      transaction: base.transaction,
+      block: base.block,
+      issuerSignatureValid: base.issuerSignatureValid,
+      keyStatus: base.keyStatus,
+      protocolCompatible: base.protocolCompatible,
+      verifiedAt: base.verifiedAt,
+    };
+
+    const credentialSummary = credential
+      ? {
+          credentialId: publicId ?? credential.credentialId,
+          issuerId: credential.issuerId,
+          status: credential.status,
+          schemaVersion: credential.schemaVersion,
+          issuedAt: credential.issuedAt,
+          lastUpdated: credential.lastUpdated,
+        }
+      : undefined;
+
+    const documentHashCheck = tamper ? this.scrubTamperResult(tamper, publicId) : undefined;
+
+    return {
+      ...evidenceFor,
+      status: base.status,
+      securityChecks,
+      documentHashCheck,
+      credential: credentialSummary,
+    };
+  }
+
+  private scrubTamperResult(tamper: any, publicId?: string): any {
+    if (!tamper) return undefined;
+    const clean = { ...tamper };
+    if (publicId && typeof clean.credentialId === 'string') {
+      clean.credentialId = publicId;
+    }
+    return clean;
+  }
+
+  private runDocumentHashCheck(credentialId: string, documentHash: string): any {
+    if (typeof documentHash !== 'string' || !HASH_RE.test(documentHash)) {
+      return { suppliedHash: documentHash, status: 'UNVERIFIABLE', message: 'documentHash must be 64-char hex', suppliedHashClean: false };
+    }
+    const result = this.tamper.check(credentialId, documentHash);
+    return { ...result, credential: this.chain.getState().getCredential(credentialId) ? true : false };
+  }
+
+  private buildSecurityChecks(credentialId: string, base: any): Record<string, boolean> {
+    const state = this.chain.getState();
+    const credential = state.getCredential(credentialId);
+    const issuer = credential ? state.getIssuer(credential.issuerId) : undefined;
+    return {
+      credentialExists: !!credential,
+      issuerRecognized: !!issuer,
+      issuerActive: issuer ? issuer.status === 'ACTIVE' : false,
+      signatureValid: !!base.issuerSignatureValid,
+      credentialHashStored: credential ? HASH_RE.test(credential.credentialHash) : false,
+      transactionValid: !!base.transaction,
+      blockValid: !!base.block,
+      merkleProofValid: base.status !== VerificationStatus.UNVERIFIABLE && !!base.proof,
+      lifecycleValid: base.status === VerificationStatus.VALID,
+      expiryValid: base.status !== VerificationStatus.EXPIRED,
+      protocolCompatible: base.protocolCompatible !== false,
+    };
   }
 
   private getEvidence(req: Request, res: Response): void {
@@ -374,7 +544,7 @@ export class ApiServer {
     if (!credentialId || typeof credentialId !== 'string') {
       return failResponse(res, { code: 'INVALID_INPUT', message: 'credentialId required' }, 400);
     }
-    if (!documentHash || typeof documentHash !== 'string' || !/^[a-f0-9]{64}$/i.test(documentHash)) {
+    if (!documentHash || typeof documentHash !== 'string' || !HASH_RE.test(documentHash)) {
       return failResponse(res, { code: 'INVALID_INPUT', message: 'documentHash must be 64-char hex' }, 400);
     }
     const result = this.tamper.check(credentialId, documentHash);
@@ -433,7 +603,7 @@ function openApiDocument(config: ApiServerConfig): any {
     openapi: '3.0.0',
     info: {
       title: 'SecureX Blockchain API',
-      version: '2.0.0',
+      version: '3.0.0',
       description: 'Permissioned Proof-of-Authority blockchain for digital credential verification.',
     },
     servers: [{ url: basePath }],
@@ -448,6 +618,16 @@ function openApiDocument(config: ApiServerConfig): any {
               type: 'object',
               properties: { code: { type: 'string' }, message: { type: 'string' } },
             },
+          },
+        },
+        QrReference: {
+          type: 'object',
+          properties: {
+            credentialId: { type: 'string' },
+            version: { type: 'string' },
+            verificationUrl: { type: 'string' },
+            exists: { type: 'boolean' },
+            qrContent: { type: 'string' },
           },
         },
       },
@@ -472,8 +652,10 @@ function openApiDocument(config: ApiServerConfig): any {
       '/state/keys': { get: { summary: 'List keys', responses: { '200': { description: 'ok' } } } },
       '/state/keys/{id}': { get: { summary: 'Get key', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' }, '404': { description: 'not found' } } } },
       '/state/keys/owner/{ownerId}': { get: { summary: 'Keys by owner', parameters: [{ name: 'ownerId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
-      '/verify/{id}': { get: { summary: 'Verify a credential', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
-      '/evidence/{id}': { get: { summary: 'Blockchain evidence', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
+      '/verify/{id}': { get: { summary: 'Verify a credential (public)', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
+      '/verify': { post: { summary: 'Verify a credential, optionally against a document hash (public)', requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { credentialId: { type: 'string' }, documentHash: { type: 'string' } } } } } }, responses: { '200': { description: 'ok' }, '400': { description: 'invalid input' } } } },
+      '/qr/{credentialId}': { get: { summary: 'Generate QR verification reference (public)', parameters: [{ name: 'credentialId', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
+      '/evidence/{id}': { get: { summary: 'Blockchain evidence (public)', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }], responses: { '200': { description: 'ok' } } } },
       '/state/validators': { get: { summary: 'List validators', responses: { '200': { description: 'ok' } } } },
       '/network/peers': { get: { summary: 'Network peers', responses: { '200': { description: 'ok' } } } },
       '/network/status': { get: { summary: 'Network status', responses: { '200': { description: 'ok' } } } },
