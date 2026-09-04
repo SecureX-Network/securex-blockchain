@@ -9,12 +9,13 @@ import {
   ApplyContext,
 } from '../registry';
 import { CryptoManager } from '../../crypto/signatures/crypto';
+import { isPublicCredentialId } from '../../crypto/identity/public-credential-id';
 
 export class CredentialModule implements TransactionModule {
   readonly type = TransactionType.CREDENTIAL_ISSUE;
 
   validate(state: StateManager, tx: Transaction): ValidationResult {
-    const { credentialId, issuerId, credentialHash, schemaVersion } = tx.payload;
+    const { credentialId, issuerId, credentialHash, schemaVersion, publicCredentialId } = tx.payload;
 
     if (!credentialId || typeof credentialId !== 'string') {
       return { valid: false, error: 'INVALID_PAYLOAD: credentialId required' };
@@ -24,6 +25,17 @@ export class CredentialModule implements TransactionModule {
     }
     if (!credentialHash || typeof credentialHash !== 'string' || credentialHash.length !== 64) {
       return { valid: false, error: 'INVALID_PAYLOAD: credentialHash must be 64-char hex' };
+    }
+
+    // When a caller supplies a public credential ID, it must be well-formed and
+    // globally unique. If absent, one is generated at apply time.
+    if (publicCredentialId !== undefined) {
+      if (typeof publicCredentialId !== 'string' || !isPublicCredentialId(publicCredentialId)) {
+        return { valid: false, error: 'INVALID_PAYLOAD: publicCredentialId must match SX-XXXX-XXXX-XXXX' };
+      }
+      if (state.publicIdExists(publicCredentialId)) {
+        return { valid: false, error: 'PUBLIC_CREDENTIAL_ID_IN_USE' };
+      }
     }
 
     const issuer = state.getIssuer(issuerId);
@@ -54,9 +66,11 @@ export class CredentialModule implements TransactionModule {
 
   apply(state: StateManager, tx: Transaction, context: ApplyContext): void {
     const { credentialId, issuerId, credentialHash, schemaVersion, metadata } = tx.payload;
+    const publicCredentialId = state.generateUniquePublicCredentialId(tx.payload.publicCredentialId);
 
     state.setCredential({
       credentialId,
+      publicCredentialId,
       issuerId,
       credentialHash,
       status: CredentialStatus.ACTIVE,

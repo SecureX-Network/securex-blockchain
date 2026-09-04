@@ -10,6 +10,7 @@ describe('Credential lifecycle state transitions', () => {
   const seedCredential = () => {
     state.setCredential({
       credentialId: 'cred-1',
+      publicCredentialId: 'SX-2F9C-A41B-8D7E',
       issuerId: 'issuer-1',
       credentialHash: 'a'.repeat(64),
       status: CredentialStatus.ACTIVE,

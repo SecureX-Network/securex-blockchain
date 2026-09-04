@@ -77,8 +77,8 @@ describe('Determinism tests', () => {
 
     const seq = [
       { type: TransactionType.ISSUER_REGISTER as TransactionType, payload: { issuerId: 'issuer-1', name: 'University', publicKey: sharedIssuer.publicKey } },
-      { type: TransactionType.CREDENTIAL_ISSUE as TransactionType, payload: { credentialId: 'cred-1', issuerId: 'issuer-1', credentialHash: SHA256Hasher.hash('cred-a') } },
-      { type: TransactionType.CREDENTIAL_ISSUE as TransactionType, payload: { credentialId: 'cred-2', issuerId: 'issuer-1', credentialHash: SHA256Hasher.hash('cred-b') } },
+      { type: TransactionType.CREDENTIAL_ISSUE as TransactionType, payload: { credentialId: 'cred-1', publicCredentialId: 'SX-2F9C-A41B-8D7E', issuerId: 'issuer-1', credentialHash: SHA256Hasher.hash('cred-a') } },
+      { type: TransactionType.CREDENTIAL_ISSUE as TransactionType, payload: { credentialId: 'cred-2', publicCredentialId: 'SX-7A31-C0E4-19F6', issuerId: 'issuer-1', credentialHash: SHA256Hasher.hash('cred-b') } },
       { type: TransactionType.CREDENTIAL_SUSPEND as TransactionType, payload: { credentialId: 'cred-1' } },
       { type: TransactionType.CREDENTIAL_REINSTATE as TransactionType, payload: { credentialId: 'cred-1' } },
     ];

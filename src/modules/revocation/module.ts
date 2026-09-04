@@ -9,6 +9,7 @@ import {
   ApplyContext,
 } from '../registry';
 import { CryptoManager } from '../../crypto/signatures/crypto';
+import { isPublicCredentialId } from '../../crypto/identity/public-credential-id';
 
 function canTransition2(from: string, to: CredentialStatus): boolean {
   return canTransition(from as CredentialStatus, to);
@@ -192,6 +193,15 @@ export class ReissueModule implements TransactionModule {
       return { valid: false, error: 'NEW_CREDENTIAL_ALREADY_EXISTS' };
     }
 
+    if (typeof tx.payload.publicCredentialId === 'string') {
+      if (!isPublicCredentialId(tx.payload.publicCredentialId)) {
+        return { valid: false, error: 'INVALID_PAYLOAD: publicCredentialId must match SX-XXXX-XXXX-XXXX' };
+      }
+      if (state.publicIdExists(tx.payload.publicCredentialId)) {
+        return { valid: false, error: 'PUBLIC_CREDENTIAL_ID_IN_USE' };
+      }
+    }
+
     return { valid: true };
   }
 
@@ -214,6 +224,7 @@ export class ReissueModule implements TransactionModule {
 
     state.setCredential({
       credentialId: newCredentialId,
+      publicCredentialId: state.generateUniquePublicCredentialId(tx.payload.publicCredentialId),
       issuerId: oldCredential.issuerId,
       credentialHash: newCredentialHash,
       status: CredentialStatus.ACTIVE,
